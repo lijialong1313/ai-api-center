@@ -33,6 +33,26 @@ public class DatabaseConfig {
      */
     @Bean
     public ContainerBootstrap containerBootstrap(@Autowired Environment env) {
+        // 关键：gaarason 要求「全进程唯一」的 ContainerBootstrap。
+        // ConnectionManager.setContainer(不同实例) 会直接抛
+        //   IllegalStateException: 检测到重复的 ContainerBootstrap 实例
+        // 这在两种场景下必然踩到：
+        //   1) 同一 JVM 里创建第二个 Spring 上下文（例如测试同时跑 MOCK 上下文和
+        //      RANDOM_PORT 上下文）；
+        //   2) 热重载 / 多次 SpringApplication.run。
+        //
+        // 但注意：不能用 ConnectionManager.container() 来判断「是否已有」——
+        // 该方法在容器为空时会**自己建一个未初始化的空容器**并缓存，拿它复用会缺
+        // QueryBuilderConfig 等注册项，后续查询报
+        //   NoSuchMethodException: gaarason.database.config.QueryBuilderConfig.<init>()
+        // 因此改为通过 hasAnyConnection() 判断「是否已经完成过一次真实初始化」。
+        if (ConnectionManager.hasAnyConnection()) {
+            ContainerBootstrap existing = ConnectionManager.container();
+            if (existing != null) {
+                return existing;
+            }
+        }
+
         String scanPackages = env.getProperty("gaarason.database.scan.packages",
                 "com.weacsoft.aiApiCenter.app.model");
         if (System.getProperty("gaarason.database.scan.packages") == null) {
@@ -43,6 +63,7 @@ public class DatabaseConfig {
         bootstrap.defaultRegister();
 
         ModelInstanceProvider modelInstanceProvider = bootstrap.getBean(ModelInstanceProvider.class);
+        // 注意：这里注册的是「按类型从 Spring 取」，每次上下文不同也能解析到当前上下文的 bean
         modelInstanceProvider.register(modelClass -> SpringContext.bean(modelClass));
 
         bootstrap.bootstrapGaarasonAutoconfiguration();

@@ -28,7 +28,8 @@ public class RouteConfig {
     private final LoginController loginController;
     private final AdminController adminController;
 
-    public RouteConfig(LoginController loginController, AdminController adminController) {
+    public RouteConfig(LoginController loginController,
+                       AdminController adminController) {
         this.loginController = loginController;
         this.adminController = adminController;
     }
@@ -44,7 +45,6 @@ public class RouteConfig {
         // ---------- 健康探针（供运维 / 负载均衡用） ----------
         router.get("/healthz", request -> com.weacsoft.jaravel.vendor.http.controller.response.ResponseBuilder
                 .json(Map.of("status", "ok")));
-
         // ---------- 管理后台：登录（免认证） ----------
         router.group(Map.of(Route.Group.PREFIX, "admin"), admin -> {
             // 登录页 / 发起统一身份认证
