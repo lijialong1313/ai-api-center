@@ -103,6 +103,14 @@ public class RouteConfig {
                 protectedAdmin.post("/api-keys/toggle", adminController::toggleApiKey);
                 protectedAdmin.post("/api-keys/delete", adminController::deleteApiKey);
 
+                // 管理员管理
+                protectedAdmin.get("/users", adminController::adminUsers);
+                protectedAdmin.post("/users", adminController::createAdminUser);
+                protectedAdmin.post("/users/update", adminController::updateAdminUser);
+                protectedAdmin.post("/users/toggle-role", adminController::toggleAdminUserRole);
+                protectedAdmin.post("/users/toggle-enabled", adminController::toggleAdminUserEnabled);
+                protectedAdmin.post("/users/delete", adminController::deleteAdminUser);
+
                 // GPU 后端管理
                 protectedAdmin.get("/backends", adminController::backends);
                 protectedAdmin.post("/backends", adminController::createBackend);

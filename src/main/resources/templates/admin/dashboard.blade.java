@@ -16,6 +16,10 @@
         <div class="n">{{ $totalCapacity }}</div>
         <div class="l">当前可用槽位总数（in-flight 上限）</div>
     </div>
+    <div class="stat">
+        <div class="n">{{ $adminCount }}</div>
+        <div class="l"><a href="/admin/users" style="color:inherit">可用管理员</a></div>
+    </div>
 </div>
 
 <div class="card">

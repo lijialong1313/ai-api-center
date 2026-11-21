@@ -56,6 +56,29 @@ public class BackendPool extends BaseModel<BackendPool, Long> {
     @Column(name = "last_checked_at")
     private String lastCheckedAt;
 
+    /**
+     * 访问该上游所需的 API Key。
+     * <p>
+     * <b>与客户端 Key 的区别</b>：客户端拿的是中间件颁发的 {@code sk-ac-*}，
+     * 中转发时必须换成后端自己的 Key，否则上游会 401。
+     * <p>
+     * 存明文——转发时要原样取用，无法哈希。界面上只回显掩码。
+     */
+    @Column(name = "api_key")
+    private String apiKey;
+
+    /**
+     * 鉴权头名，默认 {@code Authorization}。
+     * <p>
+     * 保留可配是为了兼容少数用自定义头（如 {@code api-key}）的网关。
+     */
+    @Column(name = "auth_header")
+    private String authHeader;
+
+    /** 该后端的主模型名（健康检查探测 /v1/models 时参考） */
+    @Column(name = "default_model")
+    private String defaultModel;
+
     @Column(name = "created_at", fill = TimestampFill.CreatedTimeStringFill.class)
     private String createdAt;
 
@@ -139,6 +162,45 @@ public class BackendPool extends BaseModel<BackendPool, Long> {
 
     public String getHealthPath() { return healthPath; }
     public void setHealthPath(String healthPath) { this.healthPath = healthPath; }
+
+    /** 上游 Key；空表示该后端不要求鉴权 */
+    public String getApiKey() { return apiKey; }
+    public void setApiKey(String apiKey) { this.apiKey = apiKey; }
+
+    public String getAuthHeader() { return authHeader; }
+    public void setAuthHeader(String authHeader) { this.authHeader = authHeader; }
+
+    public String getDefaultModel() { return defaultModel; }
+    public void setDefaultModel(String defaultModel) { this.defaultModel = defaultModel; }
+
+    /** 实际使用的鉴权头名（空则 Authorization） */
+    public String resolvedAuthHeader() {
+        return (authHeader == null || authHeader.isBlank()) ? "Authorization" : authHeader.trim();
+    }
+
+    /** 是否有上游 Key */
+    public boolean hasApiKey() {
+        return apiKey != null && !apiKey.isBlank();
+    }
+
+    /**
+     * Key 的掩码形式，供界面回显。
+     * <p>
+     * 只露前 6 后 4，中间固定星号——既能让运维确认「填的是哪个 Key」，
+     * 又不会把完整凭证留在页面上（截图、录屏、共享屏幕都可能泄露）。
+     *
+     * @return 掩码；无 Key 返回空串
+     */
+    public String maskedApiKey() {
+        if (!hasApiKey()) {
+            return "";
+        }
+        String k = apiKey.trim();
+        if (k.length() <= 10) {
+            return "****";
+        }
+        return k.substring(0, 6) + "****" + k.substring(k.length() - 4);
+    }
 
     public String getLastHealthStatus() { return lastHealthStatus; }
     public void setLastHealthStatus(String lastHealthStatus) { this.lastHealthStatus = lastHealthStatus; }

@@ -111,7 +111,7 @@ public class OpenAiGatewayController {
         byte[] body = readBody(request);
         HttpRequest upstreamRequest;
         try {
-            upstreamRequest = HttpRequest.newBuilder()
+            HttpRequest.Builder requestBuilder = HttpRequest.newBuilder()
                     .uri(URI.create(targetUrl))
                     .timeout(FORWARD_TIMEOUT)
                     .header("Content-Type", contentTypeOf(request))
@@ -120,8 +120,22 @@ public class OpenAiGatewayController {
                     .header("x-session-id", sessionId)
                     .method(methodOf(request),
                             body.length == 0 ? HttpRequest.BodyPublishers.noBody()
-                                    : HttpRequest.BodyPublishers.ofByteArray(body))
-                    .build();
+                                    : HttpRequest.BodyPublishers.ofByteArray(body));
+
+            // 上游鉴权：用该后端自己的 Key，绝不转发客户端那把。
+            //
+            // 为什么必须换：客户端拿的是中间件颁发的 sk-ac-*，vLLM 不认识它，
+            // 直接把客户端的 Authorization 转过去一定 401。
+            //
+            // 两个细节：
+            //   1) 头名可配（默认 Authorization），因为少数网关用 api-key；
+            //   2) 值是 Bearer 形式（与 OpenAI 兼容端点一致）。
+            if (backend.hasApiKey()) {
+                requestBuilder.header(backend.resolvedAuthHeader(),
+                        "Bearer " + backend.getApiKey());
+            }
+
+            upstreamRequest = requestBuilder.build();
         } catch (Exception e) {
             scheduler.release(requestId);
             log.warn("[gateway] 构造上游请求失败 backend={} url={}: {}",

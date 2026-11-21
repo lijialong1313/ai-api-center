@@ -5,6 +5,7 @@ import com.weacsoft.aiApiCenter.app.model.ApiKey;
 import com.weacsoft.aiApiCenter.app.model.BackendPool;
 import com.weacsoft.aiApiCenter.app.service.ApiKeyService;
 import com.weacsoft.aiApiCenter.app.service.BackendPoolService;
+import com.weacsoft.aiApiCenter.app.service.AdminUserService;
 import com.weacsoft.aiApiCenter.app.service.SchedulerConfigCache;
 import com.weacsoft.jaravel.vendor.auth.facade.Auth;
 import com.weacsoft.jaravel.vendor.http.controller.request.Request;
@@ -31,15 +32,18 @@ public class AdminController {
     private final BackendPoolService backendPoolService;
     private final SchedulerConfigCache configCache;
     private final CurrentAdmin currentAdmin;
+    private final AdminUserService adminUserService;
 
     public AdminController(ApiKeyService apiKeyService,
                            BackendPoolService backendPoolService,
                            SchedulerConfigCache configCache,
-                           CurrentAdmin currentAdmin) {
+                           CurrentAdmin currentAdmin,
+                           AdminUserService adminUserService) {
         this.apiKeyService = apiKeyService;
         this.backendPoolService = backendPoolService;
         this.configCache = configCache;
         this.currentAdmin = currentAdmin;
+        this.adminUserService = adminUserService;
     }
 
     // ==================== 首页 ====================
@@ -65,6 +69,7 @@ public class AdminController {
                 "backendCount", backends.size(),
                 "enabledBackendCount", enabledBackends,
                 "totalCapacity", totalCapacity,
+                "adminCount", adminUserService.countAdmins(),
                 "active", "dashboard"
         ));
     }
@@ -159,7 +164,9 @@ public class AdminController {
                 request.input("name"),
                 request.input("baseUrl"),
                 parseInt(request.input("capacity"), 1),
-                request.input("healthPath")
+                request.input("healthPath"),
+                request.input("apiKey"),
+                request.input("defaultModel")
         );
         return ResponseBuilder.redirect("/admin/backends?message=" + urlEncode("后端已创建"));
     }
@@ -176,7 +183,11 @@ public class AdminController {
                 request.input("baseUrl"),
                 request.input("capacity") == null ? null : parseInt(request.input("capacity"), 1),
                 parseBool(request.input("enabled")),
-                request.input("healthPath")
+                request.input("healthPath"),
+                // 空串表示「清空」，null 表示「不改」。表单未提交该字段时 input() 返回 null，
+                // 所以「留空保持不变」这个交互靠它成立。
+                request.input("apiKey"),
+                request.input("defaultModel")
         );
         return ResponseBuilder.redirect("/admin/backends?message=" + urlEncode("后端已更新"));
     }
@@ -220,6 +231,97 @@ public class AdminController {
         return ResponseBuilder.redirect("/admin/backends?message=" + urlEncode(message));
     }
 
+    // ==================== 管理员管理 ====================
+
+    /**
+     * 管理员列表页。
+     * <p>
+     * 展示所有账号（含未登录过的「预先授权」记录），并标出当前登录者是谁，
+     * 避免误操作把自己停用。
+     */
+    public Response adminUsers(Request request) {
+        AdminUser me = currentAdmin.ofOrAnonymous(request);
+        List<AdminUser> users = adminUserService.list();
+        return ResponseBuilder.view("admin.users", ResponseBuilder.map(
+                "title", "管理员管理",
+                "user", me,
+                "users", users,
+                "userTotal", users.size(),
+                "adminTotal", adminUserService.countAdmins(),
+                "message", request.query("message"),
+                "active", "users"
+        ));
+    }
+
+    /**
+     * 新建管理员账号。
+     * <p>
+     * 学工号是唯一键：已存在时不会覆盖，而是回列表页提示。
+     */
+    public Response createAdminUser(Request request) {
+        String staffNo = request.input("staffNo");
+        String name = request.input("name");
+        String role = request.input("role");
+        AdminUser created = adminUserService.create(staffNo, name, role);
+        if (created == null) {
+            return ResponseBuilder.redirect("/admin/users?message="
+                    + urlEncode("创建失败：学工号为空或已存在（" + staffNo + "）"));
+        }
+        return ResponseBuilder.redirect("/admin/users?message="
+                + urlEncode("已创建：" + created.getStaffNo()));
+    }
+
+    /** 修改角色 / 启用状态。 */
+    public Response updateAdminUser(Request request) {
+        Long id = parseLong(request.input("id"));
+        if (id == null) {
+            return ResponseBuilder.error(400, "缺少 id");
+        }
+        Boolean enabled = parseBool(request.input("enabled"));
+        String role = request.input("role");
+        adminUserService.update(id, role, enabled);
+        return ResponseBuilder.redirect("/admin/users?message=" + urlEncode("已更新"));
+    }
+
+    /** 在 admin / user 之间切换。 */
+    public Response toggleAdminUserRole(Request request) {
+        Long id = parseLong(request.input("id"));
+        if (id == null) {
+            return ResponseBuilder.error(400, "缺少 id");
+        }
+        AdminUser updated = adminUserService.toggleRole(id);
+        String msg = updated == null ? "账号不存在" : ("角色已切换为 " + updated.getRole());
+        return ResponseBuilder.redirect("/admin/users?message=" + urlEncode(msg));
+    }
+
+    /** 启用 / 停用账号。 */
+    public Response toggleAdminUserEnabled(Request request) {
+        Long id = parseLong(request.input("id"));
+        if (id == null) {
+            return ResponseBuilder.error(400, "缺少 id");
+        }
+        AdminUser user = adminUserService.get(id);
+        if (user == null) {
+            return ResponseBuilder.error(404, "账号不存在");
+        }
+        adminUserService.setEnabled(id, !Boolean.TRUE.equals(user.getEnabled()));
+        return ResponseBuilder.redirect("/admin/users?message=" + urlEncode("状态已切换"));
+    }
+
+    /**
+     * 删除账号。
+     * <p>
+     * 最后一个可用管理员不允许删除（否则认证开启后再也没人能进后台）。
+     */
+    public Response deleteAdminUser(Request request) {
+        Long id = parseLong(request.input("id"));
+        if (id == null) {
+            return ResponseBuilder.error(400, "缺少 id");
+        }
+        boolean ok = adminUserService.delete(id);
+        String msg = ok ? "已删除" : "删除被拒绝：不能删除最后一个可用管理员";
+        return ResponseBuilder.redirect("/admin/users?message=" + urlEncode(msg));
+    }
     // ==================== 无权限页 ====================
 
     /** 已登录但非管理员时的提示页（不暴露任何业务数据）。 */

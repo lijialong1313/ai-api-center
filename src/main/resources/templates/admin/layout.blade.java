@@ -121,6 +121,7 @@
         <a href="/admin" class="@if(isset($active) && $active == 'dashboard')active@endif">控制台</a>
         <a href="/admin/api-keys" class="@if(isset($active) && $active == 'api-keys')active@endif">API Key 管理</a>
         <a href="/admin/backends" class="@if(isset($active) && $active == 'backends')active@endif">GPU 后端管理</a>
+        <a href="/admin/users" class="@if(isset($active) && $active == 'users')active@endif">管理员管理</a>
     </aside>
     <div class="main">
         <div class="topbar">

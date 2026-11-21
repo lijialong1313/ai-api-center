@@ -61,6 +61,12 @@ class AdminAuthDisabledTest {
     }
 
     @Test
+    @DisplayName("免认证：管理员管理页可访问（模板变量写错会 500）")
+    void usersPageIsAccessibleWithoutLogin() throws Exception {
+        mockMvc.perform(get("/admin/users")).andExpect(status().isOk());
+    }
+
+    @Test
     @DisplayName("免认证：/admin/me 返回虚拟管理员而不是 401（页面靠它显示当前用户）")
     void meReturnsMockAdmin() throws Exception {
         mockMvc.perform(get("/admin/me"))

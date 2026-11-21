@@ -47,6 +47,24 @@ public class BackendPoolService {
      */
     public BackendPool create(String backendId, String name, String baseUrl,
                               Integer capacity, String healthPath) {
+        return create(backendId, name, baseUrl, capacity, healthPath, null, null);
+    }
+
+    /**
+     * 新建后端（含上游鉴权）。
+     *
+     * @param backendId    唯一标识
+     * @param name         可读名称
+     * @param baseUrl      vLLM 端点
+     * @param capacity     并发容量
+     * @param healthPath   健康路径
+     * @param apiKey       上游 API Key（空表示不鉴权）
+     * @param defaultModel 主模型名
+     * @return 已持久化的实体
+     */
+    public BackendPool create(String backendId, String name, String baseUrl,
+                              Integer capacity, String healthPath,
+                              String apiKey, String defaultModel) {
         BackendPool pool = new BackendPool();
         pool.setBackendId((backendId == null || backendId.isBlank())
                 ? "gpu-" + UUID.randomUUID().toString().substring(0, 8)
@@ -56,6 +74,8 @@ public class BackendPoolService {
         pool.setCapacity(capacity == null || capacity < 1 ? 1 : capacity);
         pool.setEnabled(true);
         pool.setHealthPath((healthPath == null || healthPath.isBlank()) ? "/health" : healthPath.trim());
+        pool.setApiKey(apiKey == null || apiKey.isBlank() ? null : apiKey.trim());
+        pool.setDefaultModel(defaultModel == null || defaultModel.isBlank() ? null : defaultModel.trim());
         pool.setLastHealthStatus(BackendPool.HEALTH_UNKNOWN);
         pool.setCreatedAt(TimestampFill.nowString());
         pool.setUpdatedAt(TimestampFill.nowString());
@@ -87,6 +107,28 @@ public class BackendPoolService {
      */
     public BackendPool update(Long id, String name, String baseUrl, Integer capacity,
                               Boolean enabled, String healthPath) {
+        return update(id, name, baseUrl, capacity, enabled, healthPath, null, null);
+    }
+
+    /**
+     * 修改后端（含上游鉴权）。
+     * <p>
+     * {@code apiKey} 传 {@code null} 表示「不改」；传空字符串表示「清空」。
+     * 这样界面上不填就保留原值，填了才覆盖 —— 避免每次改容量都要重填 Key。
+     *
+     * @param id           主键
+     * @param name         名称
+     * @param baseUrl      地址
+     * @param capacity     容量
+     * @param enabled      启用状态
+     * @param healthPath   健康路径
+     * @param apiKey       上游 Key：null=不改，空串=清空
+     * @param defaultModel 主模型
+     * @return 更新后的实体
+     */
+    public BackendPool update(Long id, String name, String baseUrl, Integer capacity,
+                              Boolean enabled, String healthPath,
+                              String apiKey, String defaultModel) {
         BackendPool pool = BackendPool.findById(id);
         if (pool == null) {
             return null;
@@ -105,6 +147,13 @@ public class BackendPoolService {
         }
         if (healthPath != null && !healthPath.isBlank()) {
             pool.setHealthPath(healthPath.trim());
+        }
+        // null = 不改；空串 = 清空。两者语义不同，界面「留空即保持不变」靠这个区分
+        if (apiKey != null) {
+            pool.setApiKey(apiKey.isBlank() ? null : apiKey.trim());
+        }
+        if (defaultModel != null) {
+            pool.setDefaultModel(defaultModel.isBlank() ? null : defaultModel.trim());
         }
         pool.setUpdatedAt(TimestampFill.nowString());
         BackendPool saved = pool.save();

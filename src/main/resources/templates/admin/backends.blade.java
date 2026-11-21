@@ -31,6 +31,14 @@
                 <label>健康路径</label>
                 <input type="text" name="healthPath" value="/health">
             </div>
+            <div class="field grow" style="min-width:220px">
+                <label>上游 API Key</label>
+                <input type="password" name="apiKey" placeholder="vLLM 的 Key，无鉴权可留空">
+            </div>
+            <div class="field" style="width:180px">
+                <label>主模型名（可空）</label>
+                <input type="text" name="defaultModel" placeholder="qwen3.8-27b-fast">
+            </div>
             <div class="field">
                 <button type="submit" class="btn btn-primary">添加</button>
             </div>
@@ -53,6 +61,7 @@
             <th>容量</th>
             <th>状态</th>
             <th>健康</th>
+            <th>上游 Key</th>
             <th>操作</th>
         </tr>
         </thead>
@@ -95,6 +104,13 @@
                 @endif
             </td>
             <td>
+                @if($backend->hasApiKey())
+                <span class="mono" style="font-size:11px">{{ $backend->maskedApiKey() }}</span>
+                @else
+                <span class="muted" style="font-size:11px">未设置</span>
+                @endif
+            </td>
+            <td>
                 <div class="actions">
                     <form method="post" action="/admin/backends/health-check" class="inline-form">
                         <input type="hidden" name="id" value="{{ $backend->getId() }}">
@@ -115,7 +131,7 @@
             </td>
         </tr>
         @empty
-        <tr><td colspan="7" class="muted">还没有配置任何 GPU 后端。</td></tr>
+        <tr><td colspan="8" class="muted">还没有配置任何 GPU 后端。</td></tr>
         @endforelse
         </tbody>
     </table>
