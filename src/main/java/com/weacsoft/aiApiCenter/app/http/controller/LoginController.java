@@ -46,12 +46,15 @@ public class LoginController {
     private final SsoService ssoService;
     private final SsoProperties ssoProperties;
     private final UserProvisionService provisionService;
+    private final CurrentAdmin currentAdmin;
 
     public LoginController(SsoService ssoService, SsoProperties ssoProperties,
-                           UserProvisionService provisionService) {
+                           UserProvisionService provisionService,
+                           CurrentAdmin currentAdmin) {
         this.ssoService = ssoService;
         this.ssoProperties = ssoProperties;
         this.provisionService = provisionService;
+        this.currentAdmin = currentAdmin;
     }
 
     /**
@@ -142,7 +145,7 @@ public class LoginController {
      * 当前登录者信息（JSON）。供后台页面或运维排查使用。
      */
     public Response me(Request request) {
-        AdminUser user = Auth.user();
+        AdminUser user = currentAdmin.of(request);
         if (user == null) {
             return ResponseBuilder.error(401, "未登录");
         }

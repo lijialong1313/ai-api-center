@@ -89,6 +89,11 @@ jaravel:
 
 # ---------- 业务配置 ----------
 app:
+  # 管理后台访问控制
+  admin:
+    # false = 跳过统一身份认证，任何人不登录即可进后台。
+    # 仅用于没有 SSO 凭据阶段的本机联调；对外暴露前必须改回 true。
+    auth-enabled: "${ADMIN_AUTH_ENABLED:false}"
   # 统一身份认证（广州城市理工学院智慧校园认证系统 OAuth2.0，文档 v1.0.4）
   sso:
     enabled: ${SSO_ENABLED:true}

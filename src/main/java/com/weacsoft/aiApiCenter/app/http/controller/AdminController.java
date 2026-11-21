@@ -30,20 +30,23 @@ public class AdminController {
     private final ApiKeyService apiKeyService;
     private final BackendPoolService backendPoolService;
     private final SchedulerConfigCache configCache;
+    private final CurrentAdmin currentAdmin;
 
     public AdminController(ApiKeyService apiKeyService,
                            BackendPoolService backendPoolService,
-                           SchedulerConfigCache configCache) {
+                           SchedulerConfigCache configCache,
+                           CurrentAdmin currentAdmin) {
         this.apiKeyService = apiKeyService;
         this.backendPoolService = backendPoolService;
         this.configCache = configCache;
+        this.currentAdmin = currentAdmin;
     }
 
     // ==================== 首页 ====================
 
     /** 后台首页：概览统计。 */
     public Response index(Request request) {
-        AdminUser user = Auth.guard("admin").user();
+        AdminUser user = currentAdmin.ofOrAnonymous(request);
         List<ApiKey> keys = apiKeyService.list();
         List<BackendPool> backends = backendPoolService.list();
 
@@ -74,7 +77,7 @@ public class AdminController {
         List<ApiKey> keys = apiKeyService.list();
         return ResponseBuilder.view("admin.api-keys", ResponseBuilder.map(
                 "title", "API Key 管理",
-                "user", Auth.guard("admin").user(),
+                "user", currentAdmin.ofOrAnonymous(request),
                 "keys", keys,
                 // 集合长度在控制器算好传进去：Blade 里没有 size() 函数
                 "keyTotal", keys.size(),
@@ -140,7 +143,7 @@ public class AdminController {
         List<BackendPool> backends = backendPoolService.list();
         return ResponseBuilder.view("admin.backends", ResponseBuilder.map(
                 "title", "GPU 后端管理",
-                "user", Auth.guard("admin").user(),
+                "user", currentAdmin.ofOrAnonymous(request),
                 "backends", backends,
                 // 集合长度在控制器算好传进去：Blade 里没有 size() 函数
                 "backendTotal", backends.size(),
@@ -223,7 +226,7 @@ public class AdminController {
     public Response forbidden(Request request) {
         return ResponseBuilder.view("admin.forbidden", ResponseBuilder.map(
                 "title", "无访问权限",
-                "user", Auth.guard("admin").user()
+                "user", currentAdmin.ofOrAnonymous(request)
         ));
     }
 

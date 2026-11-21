@@ -147,19 +147,38 @@ public class OpenAiGatewayController {
         log.debug("[gateway] {} -> {} ({}) status={} sse={}",
                 request.method(), targetUrl, backend.getBackendId(), status, sse);
 
-        // 流式响应：边读边写，写完才释放槽位（§9.2 第 6 条）
+        // 流式响应：边读边写，逐块 flush（§9.2 第 6 条的落点）。
+        //
+        // 关键：SSE 的结束判定<b>不能等上游 EOF</b>。实测（JDK HttpClient）：
+        //   · HttpRequest.timeout 不会中断 body InputStream 上的阻塞 read；
+        //   · HTTP/1.1 keep-alive 的上游发完 [DONE] 后连接照常被复用，
+        //     等 EOF 会让这条转发线程挂到超时（30 分钟），期间会话/槽位一直被占，
+        //     同会话的下一轮请求全部 503——真实 DSH 场景就是「第一轮回复正常、
+        //     第二轮起永久 503」，且 503 会被 headless 当 fatal 退出。
+        // 所以流式路径以协议终结标记 "data: [DONE]" 为准：转发它之后立刻关闭上游流并释放。
+        // 非流式（JSON，有 Content-Length）读完自然结束，EOF 语义本来就成立。
+        final boolean sseFinal = sse;
         Response response = ResponseBuilder.stream(status, contentType, outputStream -> {
             try (InputStream in = upstreamResponse.body()) {
                 byte[] buffer = new byte[4096];
                 int read;
+                // 跨 4096 边界扫描 [DONE]：终结标记可能被切开
+                String tail = "";
                 while ((read = in.read(buffer)) != -1) {
                     outputStream.write(buffer, 0, read);
-                    // 逐块 flush：这是「流式」真正生效的地方
                     outputStream.flush();
+                    if (sseFinal) {
+                        String probe = tail + new String(buffer, 0, read,
+                                java.nio.charset.StandardCharsets.UTF_8);
+                        if (probe.contains("data: [DONE]")) {
+                            break;   // 生成结束的协议标记已转发，不必等 EOF
+                        }
+                        tail = probe.length() > 16 ? probe.substring(probe.length() - 16) : probe;
+                    }
                 }
             } finally {
-                // 槽位只在流彻底结束后释放。写在收到响应头时释放会让下一个请求
-                // 在 vLLM 还在生成时就进来，单并发直接被击穿。
+                // 释放点：终结标记转发完 / EOF / 写失败（客户端断开）三种路径都到这里。
+                // 不能提前到「收到响应头」——那时 vLLM 还在生成，单并发会被击穿。
                 scheduler.release(requestId);
             }
         });

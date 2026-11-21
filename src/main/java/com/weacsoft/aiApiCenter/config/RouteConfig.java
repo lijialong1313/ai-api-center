@@ -29,13 +29,16 @@ public class RouteConfig {
     private final LoginController loginController;
     private final AdminController adminController;
     private final OpenAiGatewayController openAiGatewayController;
+    private final AdminAccessProperties adminAccess;
 
     public RouteConfig(LoginController loginController,
                        AdminController adminController,
-                       OpenAiGatewayController openAiGatewayController) {
+                       OpenAiGatewayController openAiGatewayController,
+                       AdminAccessProperties adminAccess) {
         this.loginController = loginController;
         this.adminController = adminController;
         this.openAiGatewayController = openAiGatewayController;
+        this.adminAccess = adminAccess;
     }
 
     @Bean
@@ -73,9 +76,17 @@ public class RouteConfig {
             admin.get("/logout", loginController::logout);
 
             // ---------- 管理后台：需要登录 + 管理员权限 ----------
+            //
+            // app.admin.auth-enabled=false 时整段跳过认证，方便在没有统一身份认证凭据的
+            // 阶段本地试用。此时直接用虚拟管理员访问，页面不会因为「没有当前用户」而崩。
+            // 安全提示：关闭后任何人都能改 Key 与后端地址，只能在本机联调用。
             admin.group(Map.of(), protectedAdmin -> {
-                protectedAdmin.middleware(new AdminAuthenticate());
-                protectedAdmin.middleware(new RequireAdmin());
+                if (adminAccess.isAuthEnabled()) {
+                    protectedAdmin.middleware(new AdminAuthenticate());
+                    protectedAdmin.middleware(new RequireAdmin());
+                } else {
+                    protectedAdmin.middleware(new LocalDevAdminShim(adminAccess));
+                }
 
                 // 概览
                 protectedAdmin.get("", adminController::index);

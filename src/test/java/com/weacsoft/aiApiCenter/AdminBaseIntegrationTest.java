@@ -13,6 +13,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.web.servlet.MockMvc;
 
 import java.util.List;
@@ -30,6 +31,10 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  */
 @SpringBootTest
 @AutoConfigureMockMvc
+// 显式开启认证：本类验证的是「认证闸门」本身的行为（未登录 302、非管理员 403）。
+// 不写死默认值，否则一旦有人把 app.admin.auth-enabled 的默认值改成 false，
+// 这些断言会集体失效却不说明原因。
+@TestPropertySource(properties = "app.admin.auth-enabled=true")
 class AdminBaseIntegrationTest {
 
     @Autowired

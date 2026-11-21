@@ -28,6 +28,13 @@ public class Migration_2026_11_20_000003_CreateBackendPoolsTable implements Migr
             table.string("last_health_status", 16).notNull().defaultValue("UNKNOWN");
             table.timestamp("last_checked_at").nullable();
             table.timestamps();
+            // 软删除列：BaseModel 统一启用软删除（softDeleting() 恒 true），
+            // newQuery() 会无条件附加 "deleted_at IS NULL"。
+            // 因此每张继承 BaseModel 的表都必须有这一列，否则查询报
+            //   no such column: xxx.deleted_at
+            // 业务上若不需要「回收站」语义，日常查询看到的永远只是未删除行，
+            // 行为等同于没有软删除，只是多一列、条件更明确。
+            table.softDeletes();
             // 索引随建表语句一并创建（Schema.create 会执行 blueprint 收集的索引 SQL）
             table.index("enabled");
         });

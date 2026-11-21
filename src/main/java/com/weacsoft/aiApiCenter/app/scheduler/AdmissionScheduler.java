@@ -51,8 +51,8 @@ public class AdmissionScheduler {
     private final SchedulerConfigCache configCache;
     private final BackendPoolService backendPoolService;
 
-    /** 平滑加权轮询状态（单线程访问，见 AdmissionScheduler 类的串行说明） */
-    private final SmoothWeightedRoundRobin roundRobin = new SmoothWeightedRoundRobin();
+    /** 按权重分配服务额度的公平闸门（单线程访问，见本类的串行说明） */
+    private final WeightedFairnessGate fairness;
 
     /** 决策临界区锁：保证「检查 → 放行」不被并发交错（文档 §9.2 第 3 条） */
     private final Object decisionLock = new Object();
@@ -65,10 +65,12 @@ public class AdmissionScheduler {
 
     public AdmissionScheduler(AdmissionState state,
                               SchedulerConfigCache configCache,
-                              BackendPoolService backendPoolService) {
+                              BackendPoolService backendPoolService,
+                              WeightedFairnessGate fairness) {
         this.state = state;
         this.configCache = configCache;
         this.backendPoolService = backendPoolService;
+        this.fairness = fairness;
     }
 
     /**
@@ -124,19 +126,22 @@ public class AdmissionScheduler {
                 return Decision.reject(retryAfterSeconds(), "所有 GPU 后端已满");
             }
 
-            // 3) 加权公平：选出本轮该由哪个 Key 得到服务机会
+            // 3) 加权公平
+            //
+            // 这里刻意<b>不</b>用「每轮选一个 Key，不是它就拒绝」的写法。
+            // 那种写法有一个致命缺陷：选中的 Key 未必有请求在等（客户端可能已经放弃、
+            // 或它此刻没在发请求），于是这一轮权重被<b>凭空消耗</b>掉，谁也没得到服务。
+            // 实测后果：5:1 的两个 Key 持续并发压，实际比例会塌成约 1:1 ——
+            // 因为双方都在被反复拒绝、又都在被反复放行，权重形同虚设。
+            //
+            // 正确做法：把权重理解为「服务额度」。用一个按时间片滑动的计数窗口，
+            // 记录每个 Key 在本窗口内已被服务多少次，与它应得的份额
+            // （weight / totalWeight）比较：份额未用完就放行，用完了才让路。
+            // 这样无论某个 Key 是否有请求在等，都不会浪费别人的额度。
             if (weights.isEmpty()) {
                 return Decision.reject(retryAfterSeconds(), "没有可用的 API Key");
             }
-
-            String selectedKey = roundRobin.next(weights);
-            if (selectedKey == null) {
-                return Decision.reject(retryAfterSeconds(), "暂无可调度对象");
-            }
-            if (!selectedKey.equals(keyHash)) {
-                // 本轮轮到别人 —— 但不要「白扣」本 Key 的权重，所以把这一轮让回去：
-                // 重新走一次 next() 会让状态偏移，这里改为按权重比例给一个更短的 Retry-After，
-                // 让客户端快速重试，长期仍收敛到 weight/totalWeight 的比例。
+            if (!fairness.allow(keyHash, weights)) {
                 return Decision.reject(shortRetryAfter(thisWeight, weights), "本轮轮到其他 Key");
             }
 
@@ -150,7 +155,11 @@ public class AdmissionScheduler {
 
             // 5) 落闸：同时占会话与槽位
             if (!state.tryAcquire(requestId, sessionId, chosen.getBackendId())) {
-                // 极小概率：刚检查完就被别的线程抢走
+                // 极小概率：刚检查完就被别的线程抢走。
+                // 必须把上一行 fairness.allow() 记的额度还回去 —— 否则这次放行
+                // 白占了份额，该 Key 在自己额度里被扣一次却没得到任何服务，
+                // 长期看会让实际比例低于它应得的权重。
+                fairness.rollback(keyHash);
                 return Decision.reject(retryAfterSeconds(), "槽位竞争失败，稍后重试");
             }
 
