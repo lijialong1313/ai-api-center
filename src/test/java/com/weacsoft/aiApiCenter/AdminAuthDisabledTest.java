@@ -24,6 +24,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * （页面要显示当前用户，取不到就崩是很容易踩的坑）。
  */
 @SpringBootTest
+@org.springframework.test.context.ActiveProfiles("test")
 @AutoConfigureMockMvc
 @TestPropertySource(properties = "app.admin.auth-enabled=false")
 class AdminAuthDisabledTest {

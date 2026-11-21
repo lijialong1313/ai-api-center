@@ -50,6 +50,8 @@ public class ApiKeyService {
         String plaintext = generatePlaintext();
         ApiKey key = new ApiKey();
         key.setKeyHash(sha256(plaintext));
+        // 同时存明文：后台需要随时复制 Key，只存哈希就无法回显
+        key.setKeyValue(plaintext);
         key.setKeyPrefix(plaintext.substring(0, Math.min(11, plaintext.length())));
         key.setLabel(label);
         key.setWeight(weight <= 0 ? 1 : weight);
@@ -73,8 +75,14 @@ public class ApiKeyService {
     }
 
     /**
-     * 修改名称 / 权重 / 启用状态。只更新传入的非空字段。
+     * 修改名称 / 权重 / 启用状态。
+     * <p>
+     * 每个参数传 {@code null} 表示「不修改」。这样界面上只改名称时不会误把权重清零。
      *
+     * @param id      主键
+     * @param label   名称，null=不改
+     * @param weight  权重，null=不改；&lt;=0 会被纠正为 1
+     * @param enabled 启用状态，null=不改
      * @return 更新后的实体，不存在返回 null
      */
     public ApiKey update(Long id, String label, Integer weight, Boolean enabled) {
@@ -83,7 +91,8 @@ public class ApiKeyService {
             return null;
         }
         if (label != null) {
-            key.setLabel(label);
+            // 允许把名称清成空串（用户主动清空），此时存 null 更干净
+            key.setLabel(label.isBlank() ? null : label.trim());
         }
         if (weight != null) {
             key.setWeight(weight <= 0 ? 1 : weight);
@@ -95,9 +104,36 @@ public class ApiKeyService {
         ApiKey saved = key.save();
         // 权重 / 启用状态变了，调度器缓存的配置必须立刻失效
         configCache.invalidateWeights();
-        log.info("[api-key] 更新 Key: id={}, weight={}, enabled={}",
-                id, key.getWeight(), key.getEnabled());
+        log.info("[api-key] 更新 Key: id={}, label={}, weight={}, enabled={}",
+                id, key.getLabel(), key.getWeight(), key.getEnabled());
         return saved;
+    }
+
+    /**
+     * 重新生成 Key 明文（保留名称、权重、启用状态与主键）。
+     * <p>
+     * <b>为什么需要</b>：Key 泄露或丢失时需要「换一个」，但删了重建会丢历史
+     * （id 变了、名字要重填）。原地换值保住所有元数据，客户端只需更新一个字符串。
+     * <p>
+     * 换值后旧 Key 立即失效——鉴权按 {@code key_hash} 查询，哈希已改。
+     *
+     * @param id 主键
+     * @return 新明文；Key 不存在返回 null
+     */
+    public String regenerate(Long id) {
+        ApiKey key = ApiKey.findById(id);
+        if (key == null) {
+            return null;
+        }
+        String plaintext = generatePlaintext();
+        key.setKeyHash(sha256(plaintext));
+        key.setKeyValue(plaintext);
+        key.setKeyPrefix(plaintext.substring(0, Math.min(11, plaintext.length())));
+        key.setUpdatedAt(TimestampFill.nowString());
+        key.save();
+        configCache.invalidateWeights();
+        log.info("[api-key] 重新生成 Key: id={}（旧值已立即失效）", id);
+        return plaintext;
     }
 
     /** 启用 / 禁用 */

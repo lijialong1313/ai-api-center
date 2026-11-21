@@ -30,6 +30,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * 所以同时验证了「路由注册」与「中间件生效」两件事。
  */
 @SpringBootTest
+@org.springframework.test.context.ActiveProfiles("test")
 @AutoConfigureMockMvc
 // 显式开启认证：本类验证的是「认证闸门」本身的行为（未登录 302、非管理员 403）。
 // 不写死默认值，否则一旦有人把 app.admin.auth-enabled 的默认值改成 false，

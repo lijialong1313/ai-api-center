@@ -4,3 +4,5 @@ data/*.db-journal
 *.log
 .idea/
 *.iml
+data/test-*.db
+data/test-*.db-journal

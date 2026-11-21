@@ -1,0 +1,19 @@
+# 测试专用配置
+#
+# 为什么必须有这个文件：之前所有 @SpringBootTest 都直接跑在 data/ai-api-center.db 上，
+# 也就是**正式库**。后果是跑一次 mvn test 就把开发/演示数据写脏：
+# 几十条 "容量测试-N"、"e2e-gpu" 之类的残留，真实的 GPU 后端配置反而被覆盖。
+# 更糟的是若有真实的 API Key 在里面，测试会往正式库插一堆假 Key。
+#
+# 这里把测试切到独立库文件，跑测试不再碰任何真实数据。
+spring:
+  datasource:
+    # 注意路径要与其他测试类一致：Spring 上下文按配置缓存，两个测试类用不同
+    # datasource.url 会创建两个上下文，而 gaarason 的 ContainerBootstrap 是
+    # 全进程唯一的，第二个上下文会失败。所以这里统一成一个测试库。
+    url: jdbc:sqlite:data/test-ai-api-center.db
+
+logging:
+  level:
+    root: WARN
+    com.weacsoft.aiApiCenter: INFO

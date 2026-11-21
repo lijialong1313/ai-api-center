@@ -46,6 +46,19 @@ public class ApiKey extends BaseModel<ApiKey, Long> {
     @Column(name = "last_used_at")
     private String lastUsedAt;
 
+    /**
+     * Key 明文，供后台复制。
+     * <p>
+     * <b>安全取舍</b>：存明文意味着数据库泄露即可直接使用所有 Key。
+     * 之所以接受这个取舍，是因为「明文只显示一次」在实际运维中不可用——
+     * 丢一次就要重建，还要改所有客户端配置。
+     * <p>
+     * 缓解：界面默认打码、点「显示」才展开；日志不打印。
+     * 鉴权仍走 {@link #keyHash} 查询，本字段只用于展示与复制。
+     */
+    @Column(name = "key_value")
+    private String keyValue;
+
     @Column(name = "created_at", fill = TimestampFill.CreatedTimeStringFill.class)
     private String createdAt;
 
@@ -107,6 +120,33 @@ public class ApiKey extends BaseModel<ApiKey, Long> {
 
     public Long getId() { return id; }
     public void setId(Long id) { this.id = id; }
+
+    /** 明文 Key（可能为空：旧数据没有该列值） */
+    public String getKeyValue() { return keyValue; }
+    public void setKeyValue(String keyValue) { this.keyValue = keyValue; }
+
+    /**
+     * 页面展示用的打码形式。
+     * <p>
+     * 只露前 11 位（即 {@code sk-ac-xxxx} 前缀段）与后 4 位。
+     *
+     * @return 打码后的 Key；无明文时回退到前缀
+     */
+    public String maskedKeyValue() {
+        if (keyValue == null || keyValue.isBlank()) {
+            return (keyPrefix == null ? "" : keyPrefix) + "…";
+        }
+        String k = keyValue.trim();
+        if (k.length() <= 15) {
+            return k.substring(0, Math.min(11, k.length())) + "…";
+        }
+        return k.substring(0, 11) + "****" + k.substring(k.length() - 4);
+    }
+
+    /** 是否可复制（有明文） */
+    public boolean hasKeyValue() {
+        return keyValue != null && !keyValue.isBlank();
+    }
 
     public String getKeyHash() { return keyHash; }
     public void setKeyHash(String keyHash) { this.keyHash = keyHash; }

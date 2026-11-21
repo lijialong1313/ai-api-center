@@ -117,6 +117,25 @@ public class AdminController {
         return ResponseBuilder.redirect("/admin/api-keys");
     }
 
+    /**
+     * 重新生成 Key 明文（保留名称、权重、启用状态与 id）。
+     * <p>
+     * 用于 Key 泄露或丢失：原地换值，客户端只需更新一个字符串，
+     * 不用重建记录、不用重填名称。
+     */
+    public Response regenerateApiKey(Request request) {
+        Long id = parseLong(request.input("id"));
+        if (id == null) {
+            return ResponseBuilder.error(400, "缺少 id");
+        }
+        String plaintext = apiKeyService.regenerate(id);
+        if (plaintext == null) {
+            return ResponseBuilder.redirect("/admin/api-keys?message="
+                    + urlEncode("Key 不存在"));
+        }
+        return ResponseBuilder.redirect("/admin/api-keys?newKey=" + urlEncode(plaintext));
+    }
+
     /** 启用 / 禁用（表单 switch 提交）。 */
     public Response toggleApiKey(Request request) {
         Long id = parseLong(request.input("id"));
@@ -279,7 +298,7 @@ public class AdminController {
         }
         Boolean enabled = parseBool(request.input("enabled"));
         String role = request.input("role");
-        adminUserService.update(id, role, enabled);
+        adminUserService.update(id, request.input("name"), role, enabled);
         return ResponseBuilder.redirect("/admin/users?message=" + urlEncode("已更新"));
     }
 

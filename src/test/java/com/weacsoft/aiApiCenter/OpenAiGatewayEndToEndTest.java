@@ -41,6 +41,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  * 不能另建 {@code /v1/stream} 之类的新路径——网关侧没有对应路由，会先 404。
  */
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
+@org.springframework.test.context.ActiveProfiles("test")
 class OpenAiGatewayEndToEndTest {
 
     @Autowired

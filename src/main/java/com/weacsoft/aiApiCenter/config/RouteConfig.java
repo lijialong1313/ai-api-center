@@ -100,6 +100,7 @@ public class RouteConfig {
                 protectedAdmin.get("/api-keys", adminController::apiKeys);
                 protectedAdmin.post("/api-keys", adminController::createApiKey);
                 protectedAdmin.post("/api-keys/update", adminController::updateApiKey);
+                protectedAdmin.post("/api-keys/regenerate", adminController::regenerateApiKey);
                 protectedAdmin.post("/api-keys/toggle", adminController::toggleApiKey);
                 protectedAdmin.post("/api-keys/delete", adminController::deleteApiKey);
 

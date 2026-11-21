@@ -95,6 +95,8 @@
             <td class="muted">{{ $u->getLastLoginAt() == null ? '从未登录' : $u->getLastLoginAt() }}</td>
             <td>
                 <div class="actions">
+                    <button type="button" class="btn btn-sm"
+                            onclick="toggleEdit({{ $u->getId() }})">编辑</button>
                     <form method="post" action="/admin/users/toggle-role" class="inline-form">
                         <input type="hidden" name="id" value="{{ $u->getId() }}">
                         <button type="submit" class="btn btn-sm">
@@ -115,6 +117,42 @@
                 </div>
             </td>
         </tr>
+        {{-- 编辑行：可改姓名与角色。学工号作为身份标识不允许改（改了等于换人） --}}
+        <tr id="edit-{{ $u->getId() }}" style="display:none;background:#f8fafc">
+            <td colspan="6">
+                <form method="post" action="/admin/users/update">
+                    <input type="hidden" name="id" value="{{ $u->getId() }}">
+                    <div class="row">
+                        <div class="field grow">
+                            <label>学工号（不可修改，身份标识）</label>
+                            <input type="text" value="{{ $u->getStaffNo() }}" disabled>
+                        </div>
+                        <div class="field grow">
+                            <label>姓名</label>
+                            <input type="text" name="name" value="{{ $u->getName() }}"
+                                   placeholder="未设置">
+                        </div>
+                        <div class="field" style="width:150px">
+                            <label>角色</label>
+                            <select name="role">
+                                <option value="admin" @if('admin' == $u->getRole())selected@endif>管理员</option>
+                                <option value="user" @if('user' == $u->getRole())selected@endif>普通用户</option>
+                            </select>
+                        </div>
+                        <div class="field">
+                            <button type="submit" class="btn btn-primary">保存</button>
+                        </div>
+                        <div class="field">
+                            <button type="button" class="btn"
+                                    onclick="toggleEdit({{ $u->getId() }})">取消</button>
+                        </div>
+                    </div>
+                    <p class="muted" style="margin:8px 0 0;font-size:12px">
+                        姓名与部门会在该用户下次登录时被统一身份认证返回的值覆盖（组织信息以认证系统为准）。
+                    </p>
+                </form>
+            </td>
+        </tr>
         @empty
         <tr><td colspan="6" class="muted">还没有任何账号。用户首次通过统一身份认证登录时会自动创建。</td></tr>
         @endforelse
@@ -124,4 +162,12 @@
         提示：<b>最后一个可用管理员不允许删除</b>，否则在认证开启时就没人能进后台了。
     </p>
 </div>
+
+<script>
+    /** 展开 / 收起某行的编辑表单 */
+    function toggleEdit(id) {
+        var row = document.getElementById('edit-' + id);
+        row.style.display = (row.style.display === 'none' || row.style.display === '') ? 'table-row' : 'none';
+    }
+</script>
 @endsection

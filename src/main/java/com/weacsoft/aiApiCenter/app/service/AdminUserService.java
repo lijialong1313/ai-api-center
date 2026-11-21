@@ -93,9 +93,31 @@ public class AdminUserService {
      * @return 更新后的账号；不存在返回 null
      */
     public AdminUser update(Long id, String role, Boolean enabled) {
+        return update(id, null, role, enabled);
+    }
+
+    /**
+     * 修改姓名 / 角色 / 启用状态。
+     * <p>
+     * 每个参数 {@code null} 表示不修改。姓名允许清空（存 null）。
+     * <p>
+     * 注意：姓名和部门这类字段在用户下次 SSO 登录时会被认证系统返回的值覆盖——
+     * 那是设计如此（组织信息以认证系统为准）。所以这里改的姓名主要用于
+     * 「还没登录过的预先授权账号」，以及临时备注。
+     *
+     * @param id      主键
+     * @param name    姓名，null=不改
+     * @param role    角色，null=不改
+     * @param enabled 启用状态，null=不改
+     * @return 更新后的账号
+     */
+    public AdminUser update(Long id, String name, String role, Boolean enabled) {
         AdminUser user = AdminUser.findById(id);
         if (user == null) {
             return null;
+        }
+        if (name != null) {
+            user.setName(name.isBlank() ? null : name.trim());
         }
         if (role != null && !role.isBlank()) {
             String normalized = normalizeRole(role);

@@ -38,6 +38,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  * 「峰值同时在途数」——不是看最终状态，而是看过程中有没有越界过。
  */
 @SpringBootTest
+@org.springframework.test.context.ActiveProfiles("test")
 class AdmissionConcurrencyTest {
 
     @Autowired

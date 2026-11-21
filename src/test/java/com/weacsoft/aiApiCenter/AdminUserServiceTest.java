@@ -22,6 +22,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  * 这两条都是「写错了平时看不出来、出事时很难救」的类型，必须有测试钉住。
  */
 @SpringBootTest
+@org.springframework.test.context.ActiveProfiles("test")
 class AdminUserServiceTest {
 
     @Autowired
@@ -128,31 +129,47 @@ class AdminUserServiceTest {
     @Test
     @DisplayName("不能删除最后一个可用管理员（认证开启后会把所有人锁在门外）")
     void cannotDeleteLastActiveAdmin() {
-        // 先记录现有管理员数量，避免破坏环境里已有数据
-        List<AdminUser> before = adminUserService.list();
-        boolean onlyOne = before.stream().filter(AdminUser::isAdmin).count() <= 1;
-
+        // 这个用例必须自造前提，不能依赖环境里「恰好有几个管理员」——
+        // 之前那版写法按现有数量分支，测试执行顺序一变前提就不成立，结果时红时绿。
+        // 这里先把所有管理员停用，只留自己这一个可用的，再断言删除被拒。
         String staffNo = "TEST-LAST-001";
         cleanup(staffNo);
+
+        // 记录并临时停用其他管理员，保证本用例有确定的初始状态
+        List<AdminUser> others = adminUserService.list().stream()
+                .filter(AdminUser::isAdmin)
+                .filter(u -> !staffNo.equals(u.getStaffNo()))
+                .toList();
+        for (AdminUser other : others) {
+            adminUserService.setEnabled(other.getId(), false);
+        }
+
         AdminUser created = adminUserService.create(staffNo, "测试", "admin");
         try {
-            if (onlyOne) {
-                // 环境里本来就只有这一个管理员：删除必须被拒绝
-                boolean deleted = adminUserService.delete(created.getId());
-                assertThat(deleted)
-                        .as("最后一个可用管理员绝不能被删除")
-                        .isFalse();
-                assertThat(adminUserService.get(created.getId()))
-                        .as("拒绝删除后账号应仍在").isNotNull();
-            } else {
-                // 环境里有多个管理员：删这个应当成功（验证拒绝条件不是「一律拒绝」）
-                boolean deleted = adminUserService.delete(created.getId());
-                assertThat(deleted)
-                        .as("存在其他管理员时，删掉一个应当允许")
-                        .isTrue();
-            }
+            assertThat(created).isNotNull();
+            // 此刻全库只有它一个可用管理员
+            assertThat(adminUserService.countAdmins())
+                    .as("前置条件：当前应只有 1 个可用管理员").isEqualTo(1);
+
+            boolean deleted = adminUserService.delete(created.getId());
+            assertThat(deleted)
+                    .as("最后一个可用管理员绝不能被删除")
+                    .isFalse();
+            assertThat(adminUserService.get(created.getId()))
+                    .as("拒绝删除后账号应仍在").isNotNull();
+
+            // 再验证「不是一律拒绝」：停用它之后它就不可用了，
+            // 此时删除应当成功（因为它不再是可用管理员，删了不影响可用性）
+            adminUserService.setEnabled(created.getId(), false);
+            assertThat(adminUserService.delete(created.getId()))
+                    .as("已停用的账号不再算可用管理员，应当允许删除")
+                    .isTrue();
         } finally {
             cleanup(staffNo);
+            // 恢复被临时停用的管理员
+            for (AdminUser other : others) {
+                adminUserService.setEnabled(other.getId(), true);
+            }
         }
     }
 
