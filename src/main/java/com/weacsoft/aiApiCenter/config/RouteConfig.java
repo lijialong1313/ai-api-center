@@ -2,6 +2,7 @@ package com.weacsoft.aiApiCenter.config;
 
 import com.weacsoft.aiApiCenter.app.http.controller.AdminController;
 import com.weacsoft.aiApiCenter.app.http.controller.LoginController;
+import com.weacsoft.aiApiCenter.app.http.controller.OpenAiGatewayController;
 import com.weacsoft.aiApiCenter.app.http.middleware.AdminAuthenticate;
 import com.weacsoft.aiApiCenter.app.http.middleware.RequireAdmin;
 import com.weacsoft.jaravel.vendor.route.Route;
@@ -27,11 +28,14 @@ public class RouteConfig {
 
     private final LoginController loginController;
     private final AdminController adminController;
+    private final OpenAiGatewayController openAiGatewayController;
 
     public RouteConfig(LoginController loginController,
-                       AdminController adminController) {
+                       AdminController adminController,
+                       OpenAiGatewayController openAiGatewayController) {
         this.loginController = loginController;
         this.adminController = adminController;
+        this.openAiGatewayController = openAiGatewayController;
     }
 
     @Bean
@@ -45,6 +49,20 @@ public class RouteConfig {
         // ---------- 健康探针（供运维 / 负载均衡用） ----------
         router.get("/healthz", request -> com.weacsoft.jaravel.vendor.http.controller.response.ResponseBuilder
                 .json(Map.of("status", "ok")));
+
+        // ---------- DSH 流量：OpenAI 兼容端点（文档 §9.2 第 9 条要求与后台分离） ----------
+        // 走 jaravel 自己的路由与 Response 契约：流式（SSE）与 JSON 错误共用同一个
+        // Response 类型，因此成功与失败可以共存于同一个处理方法。
+        //
+        // 注意：逐个列出端点而不是 "/**"。jaravel 的 URI 规范化会在路由末尾补斜杠，
+        // "/v1/**" 会变成 "/v1/**/"，而 Spring 的 PathPattern 要求 "**" 必须在末尾，
+        // 启动时会报 Invalid mapping pattern。
+        router.group(Map.of(Route.Group.PREFIX, "v1"), v1 -> {
+            v1.post("/chat/completions", openAiGatewayController::proxy);   // DSH 主用
+            v1.post("/completions", openAiGatewayController::proxy);
+            v1.post("/embeddings", openAiGatewayController::proxy);
+            v1.get("/models", openAiGatewayController::proxy);
+        });
         // ---------- 管理后台：登录（免认证） ----------
         router.group(Map.of(Route.Group.PREFIX, "admin"), admin -> {
             // 登录页 / 发起统一身份认证
