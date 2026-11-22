@@ -47,7 +47,7 @@ public class BackendPoolService {
      */
     public BackendPool create(String backendId, String name, String baseUrl,
                               Integer capacity, String healthPath) {
-        return create(backendId, name, baseUrl, capacity, healthPath, null, null);
+        return create(backendId, name, baseUrl, capacity, healthPath, null, null, 0);
     }
 
     /**
@@ -65,6 +65,18 @@ public class BackendPoolService {
     public BackendPool create(String backendId, String name, String baseUrl,
                               Integer capacity, String healthPath,
                               String apiKey, String defaultModel) {
+        return create(backendId, name, baseUrl, capacity, healthPath, apiKey, defaultModel, 0);
+    }
+
+    /**
+     * 新建后端（含分级门槛）。
+     *
+     * @param minLevel 要求的最低 Key 等级，0 表示不限制
+     * @return 已持久化的实体
+     */
+    public BackendPool create(String backendId, String name, String baseUrl,
+                              Integer capacity, String healthPath,
+                              String apiKey, String defaultModel, Integer minLevel) {
         BackendPool pool = new BackendPool();
         pool.setBackendId((backendId == null || backendId.isBlank())
                 ? "gpu-" + UUID.randomUUID().toString().substring(0, 8)
@@ -76,6 +88,7 @@ public class BackendPoolService {
         pool.setHealthPath((healthPath == null || healthPath.isBlank()) ? "/health" : healthPath.trim());
         pool.setApiKey(apiKey == null || apiKey.isBlank() ? null : apiKey.trim());
         pool.setDefaultModel(defaultModel == null || defaultModel.isBlank() ? null : defaultModel.trim());
+        pool.setMinLevel(minLevel == null ? 0 : Math.max(0, minLevel));
         pool.setLastHealthStatus(BackendPool.HEALTH_UNKNOWN);
         pool.setCreatedAt(TimestampFill.nowString());
         pool.setUpdatedAt(TimestampFill.nowString());
@@ -129,6 +142,18 @@ public class BackendPoolService {
     public BackendPool update(Long id, String name, String baseUrl, Integer capacity,
                               Boolean enabled, String healthPath,
                               String apiKey, String defaultModel) {
+        return update(id, name, baseUrl, capacity, enabled, healthPath, apiKey, defaultModel, null);
+    }
+
+    /**
+     * 修改后端（含分级门槛）。
+     *
+     * @param minLevel 最低 Key 等级，null=不改
+     * @return 更新后的实体
+     */
+    public BackendPool update(Long id, String name, String baseUrl, Integer capacity,
+                              Boolean enabled, String healthPath,
+                              String apiKey, String defaultModel, Integer minLevel) {
         BackendPool pool = BackendPool.findById(id);
         if (pool == null) {
             return null;
@@ -154,6 +179,9 @@ public class BackendPoolService {
         }
         if (defaultModel != null) {
             pool.setDefaultModel(defaultModel.isBlank() ? null : defaultModel.trim());
+        }
+        if (minLevel != null) {
+            pool.setMinLevel(Math.max(0, minLevel));
         }
         pool.setUpdatedAt(TimestampFill.nowString());
         BackendPool saved = pool.save();

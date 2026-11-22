@@ -47,7 +47,7 @@ public class SchedulerConfigCache {
      * 当前可参与调度的权重表（apiKey 哈希 → 权重）。
      * <p>
      * 调度循环每轮调用一次。命中本地缓存直接返回；过期或为空时回源数据库，
-     * 并顺带把权重写入 jaravel Cache（供其它实例/后续读取）。
+     * 并将权重写入 jaravel Cache（供其他实例与后续读取）。
      *
      * @return 只读视图：Key 的哈希 → 权重
      */

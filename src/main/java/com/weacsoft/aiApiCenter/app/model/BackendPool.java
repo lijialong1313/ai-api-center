@@ -79,6 +79,15 @@ public class BackendPool extends BaseModel<BackendPool, Long> {
     @Column(name = "default_model")
     private String defaultModel;
 
+    /**
+     * 该后端要求的最低 Key 等级，默认 0（不限制）。
+     * <p>
+     * 例：设为 1 时，只有 {@code level >= 1} 的 Key 才会被调度到本后端。
+     * 用于把高价值算力保留给高等级 Key。
+     */
+    @Column(name = "min_level")
+    private Integer minLevel;
+
     @Column(name = "created_at", fill = TimestampFill.CreatedTimeStringFill.class)
     private String createdAt;
 
@@ -153,6 +162,14 @@ public class BackendPool extends BaseModel<BackendPool, Long> {
 
     public String getBaseUrl() { return baseUrl; }
     public void setBaseUrl(String baseUrl) { this.baseUrl = baseUrl; }
+
+    public Integer getMinLevel() { return minLevel == null ? 0 : minLevel; }
+    public void setMinLevel(Integer minLevel) { this.minLevel = minLevel; }
+
+    /** 指定等级的 Key 是否允许使用本后端 */
+    public boolean allowsLevel(int keyLevel) {
+        return keyLevel >= getMinLevel();
+    }
 
     public Integer getCapacity() { return capacity; }
     public void setCapacity(Integer capacity) { this.capacity = capacity; }

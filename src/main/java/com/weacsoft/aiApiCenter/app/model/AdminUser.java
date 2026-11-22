@@ -15,7 +15,7 @@ import java.util.List;
  * <p>
  * <b>没有口令字段</b>：管理员登录走统一身份认证（OAuth2 授权码），
  * 本系统只保存认证系统返回的身份信息，因此 {@code auth} 模块「密码校验与应用层解耦」
- * 的设计在这里天然成立——我们根本不校验密码。
+ * 的设计在此场景下自然成立：本系统不校验密码。
  * <p>
  * 主键即 {@code Auth} 的比对依据（{@link #getAuthIdentifier()}），
  * 统一身份认证成功后由 {@code UserProvisionService} 按学工号 {@code upsert} 出本实体，

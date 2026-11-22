@@ -21,7 +21,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * <p>
  * 这个模式是为「学校还没分配 SSO 的 client-id / client-secret，但需要先把后台跑起来看」
  * 准备的。它<b>不安全</b>，因此同时要验证：控制器在「没有真实登录态」时也不会 500
- * （页面要显示当前用户，取不到就崩是很容易踩的坑）。
+ * （页面需显示当前用户，取值缺失会导致渲染失败）。
  */
 @SpringBootTest
 @org.springframework.test.context.ActiveProfiles("test")

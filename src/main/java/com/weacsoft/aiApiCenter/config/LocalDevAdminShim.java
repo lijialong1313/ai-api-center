@@ -38,7 +38,7 @@ public class LocalDevAdminShim implements Middleware {
     @Override
     public Response handle(Request request, NextFunction next, String... params) {
         AdminUser dev = new AdminUser();
-        // id 给一个负数：一眼能看出不是真实账号，也避免被当成有效主键去查库
+        // id 取负值：便于识别其非真实账号，同时避免被当作有效主键查询数据库
         dev.setId(-1L);
         dev.setStaffNo(properties.getMockAdminStaffNo());
         dev.setName(properties.getMockAdminName());

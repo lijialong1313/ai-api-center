@@ -164,7 +164,7 @@ class AdminBaseIntegrationTest {
      * 签发一个真实可用的 JWT。
      * <p>
      * 关键：签发后必须 {@link AuthManager#clear()} 清掉本线程缓存的守卫实例，
-     * 否则 MockMvc 在同一线程内会直接复用「已登录」的守卫，根本没走 token 校验，
+     * 否则 MockMvc 在同一线程内会复用「已登录」的守卫实例，未经 token 校验，
      * 测试就变成了自欺欺人。清掉之后，请求里的守卫是全新的，必须真的解析并校验
      * Authorization 头里的 token 才能通过——这才是端到端验证。
      */

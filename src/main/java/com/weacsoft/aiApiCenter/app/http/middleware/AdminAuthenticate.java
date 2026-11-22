@@ -19,7 +19,7 @@ import com.weacsoft.jaravel.vendor.http.middleware.Middleware;
  * <b>必须写到 {@link AuthContext#get()} 的那个请求上</b>，而不是中间件拿到的
  * {@code request} 参数：框架路由层会先 {@code buildFromServerRequest} 出一个 Request
  * 放进 {@code AuthContext}，之后才把<b>另外</b>一个 Request 实例交给中间件链。
- * 两个对象不是同一个（实测 {@code AuthContext.get() == request} 为 false），
+ * 二者并非同一实例（{@code AuthContext.get() == request} 为 false），
  * 改错对象的话守卫读到的仍是原始请求，Cookie 里的 token 永远补不上——
  * 表现为「带 Authorization 头能过、只带 Cookie 一定 302」。
  * <p>

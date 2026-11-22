@@ -11,7 +11,7 @@ import org.springframework.context.annotation.Configuration;
 /**
  * 认证配置，对齐 Laravel {@code config/auth.php}。
  * <p>
- * 管理员使用<b>统一身份认证</b>登录，本系统不保存口令；密码校验环节根本不存在，
+ * 管理员使用<b>统一身份认证</b>登录，本系统不保存口令；密码校验环节并不存在，
  * 因此 {@code auth} 模块「密码校验与应用层解耦」的设计在这里天然成立。
  * <p>
  * 守卫 {@code admin} 使用 {@code jwt} 驱动（引入 {@code jwt} 模块后自动可用）：

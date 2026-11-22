@@ -41,15 +41,21 @@
                 <label>主模型名（可空）</label>
                 <input type="text" name="defaultModel" placeholder="qwen3.8-27b-fast">
             </div>
+            <div class="field" style="width:160px">
+                <label>最低 Key 等级</label>
+                <input type="number" name="minLevel" value="0" min="0" max="99">
+            </div>
             <div class="field">
                 <button type="submit" class="btn btn-primary">添加</button>
             </div>
         </div>
         <p class="muted" style="margin:12px 0 0">
             容量对应槽位数：同一时刻该后端最多允许「容量」个请求在途。vLLM 的
-            <span class="mono">max_num_seqs=1</span> 时请填 1，否则会打爆后端。<br>
+            <span class="mono">max_num_seqs=1</span> 时应填 1，否则将超出后端承载能力。<br>
             上游 API Key 是<b>该后端自己的</b>凭证：客户端拿的是中间件颁发的
-            <span class="mono">sk-ac-*</span>，转发时必须换成这个，否则上游 401。
+            <span class="mono">sk-ac-*</span>；转发时须替换为本字段的值，否则上游返回 401。<br>
+            最低 Key 等级用于把本后端保留给高等级 Key：设为 1 时，只有等级 &ge; 1 的 Key
+            才会被调度到它上面；0 表示对所有等级开放。
         </p>
     </form>
 </div>
@@ -62,6 +68,7 @@
             <th>ID</th>
             <th>标识 / 名称</th>
             <th>地址 / 容量</th>
+            <th>等级门槛</th>
             <th>上游 Key</th>
             <th>状态</th>
             <th>健康</th>
@@ -82,6 +89,13 @@
                     容量 {{ $backend->getCapacity() }} ·
                     {{ $backend->resolvedHealthPath() }}
                 </span>
+            </td>
+            <td>
+                @if($backend->getMinLevel() > 0)
+                <span class="badge badge-warn">&ge; {{ $backend->getMinLevel() }}</span>
+                @else
+                <span class="muted" style="font-size:12px">不限</span>
+                @endif
             </td>
             <td>
                 @if($backend->hasApiKey())
@@ -133,7 +147,7 @@
         </tr>
         {{-- 编辑行：默认隐藏，点「编辑」展开。用独立表单承载全部可改字段 --}}
         <tr id="edit-{{ $backend->getId() }}" style="display:none;background:#f8fafc">
-            <td colspan="7">
+            <td colspan="8">
                 <form method="post" action="/admin/backends/update">
                     <input type="hidden" name="id" value="{{ $backend->getId() }}">
                     <div class="row">
@@ -167,6 +181,11 @@
                             <input type="text" name="defaultModel"
                                    value="{{ $backend->getDefaultModel() }}">
                         </div>
+                        <div class="field" style="width:140px">
+                            <label>最低 Key 等级</label>
+                            <input type="number" name="minLevel" min="0" max="99"
+                                   value="{{ $backend->getMinLevel() }}">
+                        </div>
                         <div class="field">
                             <button type="submit" class="btn btn-primary">保存</button>
                         </div>
@@ -179,7 +198,7 @@
             </td>
         </tr>
         @empty
-        <tr><td colspan="7" class="muted">还没有配置任何 GPU 后端。</td></tr>
+        <tr><td colspan="8" class="muted">还没有配置任何 GPU 后端。</td></tr>
         @endforelse
         </tbody>
     </table>

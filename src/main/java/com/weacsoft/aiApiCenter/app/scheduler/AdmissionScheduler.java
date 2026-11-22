@@ -90,6 +90,23 @@ public class AdmissionScheduler {
      * @return 决策结果
      */
     public Decision decide(String requestId, String sessionId, String keyHash) {
+        return decide(requestId, sessionId, keyHash, 0);
+    }
+
+    /**
+     * 准入决策（带 Key 等级）。
+     * <p>
+     * 等级用于分级调度：只考虑 {@code minLevel <= keyLevel} 的后端。
+     * 若所有有空槽的后端都因等级门槛不可用，则视为「当前无可用后端」并让客户端重试
+     * ——而不是放行到不该给它用的机器上。
+     *
+     * @param requestId 请求唯一 id
+     * @param sessionId 会话 id
+     * @param keyHash   Key 哈希
+     * @param keyLevel  Key 等级（数值越大等级越高）
+     * @return 决策结果
+     */
+    public Decision decide(String requestId, String sessionId, String keyHash, int keyLevel) {
         if (sessionId == null || sessionId.isBlank()) {
             return Decision.reject(0, "缺少 x-session-id");
         }
@@ -102,7 +119,7 @@ public class AdmissionScheduler {
 
             // 0) 先判该 Key 是否还有被服务的资格 —— 这是终态判断，必须在「会话忙/槽位满」
             //    这些可重试判断之前：否则一个已停用的 Key 会收到 503 + Retry-After，
-            //    客户端按指示无限重试，永远等不到成功，白白放大负载。
+            //    客户端按指示持续重试，始终无法成功，徒增负载。
             Map<String, Integer> weights = configCache.weights();
             Integer thisWeight = weights.get(keyHash);
             if (thisWeight == null || thisWeight <= 0) {
@@ -117,27 +134,36 @@ public class AdmissionScheduler {
             // 2) 后端槽位
             List<BackendPool> candidates = backendPoolService.schedulable();
             List<BackendPool> available = new ArrayList<>();
+            int levelBlocked = 0;
             for (BackendPool backend : candidates) {
-                if (state.hasFreeSlot(backend.getBackendId())) {
-                    available.add(backend);
+                if (!state.hasFreeSlot(backend.getBackendId())) {
+                    continue;
                 }
+                // 等级门槛：该后端只服务达到 minLevel 的 Key。
+                // 单独计数是为了在「全被等级挡住」时给出准确原因——
+                // 否则运维会判断为「后端已满」，从而排查无关方向。
+                if (!backend.allowsLevel(keyLevel)) {
+                    levelBlocked++;
+                    continue;
+                }
+                available.add(backend);
             }
             if (available.isEmpty()) {
+                if (levelBlocked > 0) {
+                    return Decision.reject(retryAfterSeconds(),
+                            "该 Key 等级不足以使用当前空闲后端");
+                }
                 return Decision.reject(retryAfterSeconds(), "所有 GPU 后端已满");
             }
 
             // 3) 加权公平
             //
-            // 这里刻意<b>不</b>用「每轮选一个 Key，不是它就拒绝」的写法。
-            // 那种写法有一个致命缺陷：选中的 Key 未必有请求在等（客户端可能已经放弃、
-            // 或它此刻没在发请求），于是这一轮权重被<b>凭空消耗</b>掉，谁也没得到服务。
-            // 实测后果：5:1 的两个 Key 持续并发压，实际比例会塌成约 1:1 ——
-            // 因为双方都在被反复拒绝、又都在被反复放行，权重形同虚设。
+            // 采用配额制：将权重视为「服务额度」。记录每个 Key 在统计窗口内已服务次数，
+            // 与该 Key 应得份额（weight / totalWeight）比较；份额未用完则放行，用完后让路。
             //
-            // 正确做法：把权重理解为「服务额度」。用一个按时间片滑动的计数窗口，
-            // 记录每个 Key 在本窗口内已被服务多少次，与它应得的份额
-            // （weight / totalWeight）比较：份额未用完就放行，用完了才让路。
-            // 这样无论某个 Key 是否有请求在等，都不会浪费别人的额度。
+            // 该方式适用于请求驱动模型：每个 Key 是否被服务由其自身请求触发，
+            // 不要求所有候选者同时排队。因此某个 Key 静默时，其额度不会被他人占用，
+            // 也不会因「选中了无请求的 Key」而损耗额度。
             if (weights.isEmpty()) {
                 return Decision.reject(retryAfterSeconds(), "没有可用的 API Key");
             }
@@ -157,7 +183,7 @@ public class AdmissionScheduler {
             if (!state.tryAcquire(requestId, sessionId, chosen.getBackendId())) {
                 // 极小概率：刚检查完就被别的线程抢走。
                 // 必须把上一行 fairness.allow() 记的额度还回去 —— 否则这次放行
-                // 白占了份额，该 Key 在自己额度里被扣一次却没得到任何服务，
+                // 该 Key 的额度被占用一次，却未获得对应服务，
                 // 长期看会让实际比例低于它应得的权重。
                 fairness.rollback(keyHash);
                 return Decision.reject(retryAfterSeconds(), "槽位竞争失败，稍后重试");

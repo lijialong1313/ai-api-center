@@ -36,7 +36,7 @@ public class DatabaseConfig {
         // 关键：gaarason 要求「全进程唯一」的 ContainerBootstrap。
         // ConnectionManager.setContainer(不同实例) 会直接抛
         //   IllegalStateException: 检测到重复的 ContainerBootstrap 实例
-        // 这在两种场景下必然踩到：
+        // 以下两种场景必然触发：
         //   1) 同一 JVM 里创建第二个 Spring 上下文（例如测试同时跑 MOCK 上下文和
         //      RANDOM_PORT 上下文）；
         //   2) 热重载 / 多次 SpringApplication.run。

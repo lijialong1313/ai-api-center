@@ -47,6 +47,18 @@ public class ApiKeyService {
      * @return 新建结果，{@code plaintext} 为唯一一次可见的明文
      */
     public CreatedKey create(String label, int weight) {
+        return create(label, weight, 0);
+    }
+
+    /**
+     * 新建 Key（带等级）。
+     *
+     * @param label  名称
+     * @param weight 权重
+     * @param level  等级，数值越大等级越高；用于分级调度
+     * @return 新建结果
+     */
+    public CreatedKey create(String label, int weight, int level) {
         String plaintext = generatePlaintext();
         ApiKey key = new ApiKey();
         key.setKeyHash(sha256(plaintext));
@@ -55,6 +67,7 @@ public class ApiKeyService {
         key.setKeyPrefix(plaintext.substring(0, Math.min(11, plaintext.length())));
         key.setLabel(label);
         key.setWeight(weight <= 0 ? 1 : weight);
+        key.setLevel(Math.max(0, level));
         key.setEnabled(true);
         key.setCreatedAt(TimestampFill.nowString());
         key.setUpdatedAt(TimestampFill.nowString());
@@ -86,6 +99,16 @@ public class ApiKeyService {
      * @return 更新后的实体，不存在返回 null
      */
     public ApiKey update(Long id, String label, Integer weight, Boolean enabled) {
+        return update(id, label, weight, enabled, null);
+    }
+
+    /**
+     * 修改名称 / 权重 / 启用状态 / 等级。
+     *
+     * @param level 等级，null=不改
+     * @return 更新后的实体
+     */
+    public ApiKey update(Long id, String label, Integer weight, Boolean enabled, Integer level) {
         ApiKey key = ApiKey.findById(id);
         if (key == null) {
             return null;
@@ -99,6 +122,9 @@ public class ApiKeyService {
         }
         if (enabled != null) {
             key.setEnabled(enabled);
+        }
+        if (level != null) {
+            key.setLevel(Math.max(0, level));
         }
         key.setUpdatedAt(TimestampFill.nowString());
         ApiKey saved = key.save();

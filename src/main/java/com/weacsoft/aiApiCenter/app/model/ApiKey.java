@@ -47,17 +47,24 @@ public class ApiKey extends BaseModel<ApiKey, Long> {
     private String lastUsedAt;
 
     /**
-     * Key 明文，供后台复制。
+     * Key 明文，供管理后台复制。
      * <p>
-     * <b>安全取舍</b>：存明文意味着数据库泄露即可直接使用所有 Key。
-     * 之所以接受这个取舍，是因为「明文只显示一次」在实际运维中不可用——
-     * 丢一次就要重建，还要改所有客户端配置。
+     * <b>安全影响</b>：本字段以明文存储，数据库泄露即可直接使用全部 Key；
+     * 仅存哈希时无法由哈希反推 Key。
      * <p>
-     * 缓解：界面默认打码、点「显示」才展开；日志不打印。
-     * 鉴权仍走 {@link #keyHash} 查询，本字段只用于展示与复制。
+     * 缓解措施：界面默认显示掩码，需手动展开；日志不输出该字段。
+     * 鉴权通过 {@link #keyHash} 查询，本字段仅用于展示与复制。
      */
     @Column(name = "key_value")
     private String keyValue;
+
+    /**
+     * 等级，默认 0，数值越大等级越高。
+     * <p>
+     * 用于分级调度：某些 GPU 可配置「最低等级」门槛，只有达到该等级的 Key 才会被放行到它。
+     */
+    @Column(name = "level")
+    private Integer level;
 
     @Column(name = "created_at", fill = TimestampFill.CreatedTimeStringFill.class)
     private String createdAt;
@@ -156,6 +163,9 @@ public class ApiKey extends BaseModel<ApiKey, Long> {
 
     public String getLabel() { return label; }
     public void setLabel(String label) { this.label = label; }
+
+    public Integer getLevel() { return level == null ? 0 : level; }
+    public void setLevel(Integer level) { this.level = level; }
 
     public Integer getWeight() { return weight; }
     public void setWeight(Integer weight) { this.weight = weight; }

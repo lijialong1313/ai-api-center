@@ -99,7 +99,8 @@ public class AdminController {
     public Response createApiKey(Request request) {
         String label = request.input("label");
         Integer weight = parseInt(request.input("weight"), 1);
-        ApiKeyService.CreatedKey created = apiKeyService.create(label, weight);
+        Integer level = parseInt(request.input("level"), 0);
+        ApiKeyService.CreatedKey created = apiKeyService.create(label, weight, level);
         return ResponseBuilder.redirect("/admin/api-keys?newKey="
                 + urlEncode(created.plaintext()));
     }
@@ -113,7 +114,8 @@ public class AdminController {
         Integer weight = request.input("weight") == null ? null : parseInt(request.input("weight"), 1);
         String label = request.input("label");
         Boolean enabled = parseBool(request.input("enabled"));
-        apiKeyService.update(id, label, weight, enabled);
+        Integer level = request.input("level") == null ? null : parseInt(request.input("level"), 0);
+        apiKeyService.update(id, label, weight, enabled, level);
         return ResponseBuilder.redirect("/admin/api-keys");
     }
 
@@ -185,7 +187,8 @@ public class AdminController {
                 parseInt(request.input("capacity"), 1),
                 request.input("healthPath"),
                 request.input("apiKey"),
-                request.input("defaultModel")
+                request.input("defaultModel"),
+                parseInt(request.input("minLevel"), 0)
         );
         return ResponseBuilder.redirect("/admin/backends?message=" + urlEncode("后端已创建"));
     }
@@ -206,7 +209,8 @@ public class AdminController {
                 // 空串表示「清空」，null 表示「不改」。表单未提交该字段时 input() 返回 null，
                 // 所以「留空保持不变」这个交互靠它成立。
                 request.input("apiKey"),
-                request.input("defaultModel")
+                request.input("defaultModel"),
+                request.input("minLevel") == null ? null : parseInt(request.input("minLevel"), 0)
         );
         return ResponseBuilder.redirect("/admin/backends?message=" + urlEncode("后端已更新"));
     }

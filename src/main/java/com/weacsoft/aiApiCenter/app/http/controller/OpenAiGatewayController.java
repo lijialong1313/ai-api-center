@@ -53,7 +53,19 @@ public class OpenAiGatewayController {
     private final AdmissionScheduler scheduler;
 
     /** 复用客户端实例：内部带连接池 */
+    /**
+     * 转发用 HTTP 客户端。
+     * <p>
+     * <b>必须锁定 HTTP/1.1</b>：JDK HttpClient 默认会对明文 http 尝试向 h2c 升级
+     * （发出 {@code Upgrade: h2c} + {@code HTTP2-Settings} 头）。vLLM 前置的
+     * uvicorn/starlette 对 h2c 升级支持不完整，表现为<b>上游无法读取请求体</b>，
+     * 返回 400 {@code {"detail":[{"loc":["body"],"msg":"Field required"}]}}。
+     * <p>
+     * 此类故障难以从日志判断：网关日志显示已转发，抓包亦可见 95 字节 body 正确发出，
+     * 但上游就是认为 body 为空 —— 根因在传输层协商，不在业务代码。
+     */
     private final HttpClient httpClient = HttpClient.newBuilder()
+            .version(HttpClient.Version.HTTP_1_1)
             .connectTimeout(Duration.ofSeconds(10))
             .followRedirects(HttpClient.Redirect.NEVER)
             .build();
@@ -89,8 +101,9 @@ public class OpenAiGatewayController {
 
         // ---------- 3. 准入 ----------
         String requestId = UUID.randomUUID().toString();
+        // 带上 Key 等级：分级调度据此过滤后端
         AdmissionScheduler.Decision decision =
-                scheduler.decide(requestId, sessionId, apiKey.getKeyHash());
+                scheduler.decide(requestId, sessionId, apiKey.getKeyHash(), apiKey.getLevel());
         if (!decision.admitted()) {
             return busy(decision);
         }
@@ -161,16 +174,13 @@ public class OpenAiGatewayController {
         log.debug("[gateway] {} -> {} ({}) status={} sse={}",
                 request.method(), targetUrl, backend.getBackendId(), status, sse);
 
-        // 流式响应：边读边写，逐块 flush（§9.2 第 6 条的落点）。
+        // 流式响应：边读边写，逐块 flush（对应设计文档 §9.2 第 6 条）。
         //
-        // 关键：SSE 的结束判定<b>不能等上游 EOF</b>。实测（JDK HttpClient）：
-        //   · HttpRequest.timeout 不会中断 body InputStream 上的阻塞 read；
-        //   · HTTP/1.1 keep-alive 的上游发完 [DONE] 后连接照常被复用，
-        //     等 EOF 会让这条转发线程挂到超时（30 分钟），期间会话/槽位一直被占，
-        //     同会话的下一轮请求全部 503——真实 DSH 场景就是「第一轮回复正常、
-        //     第二轮起永久 503」，且 503 会被 headless 当 fatal 退出。
-        // 所以流式路径以协议终结标记 "data: [DONE]" 为准：转发它之后立刻关闭上游流并释放。
-        // 非流式（JSON，有 Content-Length）读完自然结束，EOF 语义本来就成立。
+        // SSE 的结束判定以协议终结标记 {@code data: [DONE]} 为准，不以读取到流末尾为准。
+        // 原因：HttpRequest.timeout 不中断 body InputStream 上的阻塞读取；且 HTTP/1.1
+        // keep-alive 下上游发送 [DONE] 后连接可能被复用而不返回 EOF。若仅依赖 EOF，
+        // 转发线程会阻塞至超时，期间会话与槽位持续占用，导致同会话后续请求持续返回 503。
+        // 非流式响应（JSON，含 Content-Length）读取到末尾即自然结束，EOF 语义成立。
         final boolean sseFinal = sse;
         Response response = ResponseBuilder.stream(status, contentType, outputStream -> {
             try (InputStream in = upstreamResponse.body()) {
