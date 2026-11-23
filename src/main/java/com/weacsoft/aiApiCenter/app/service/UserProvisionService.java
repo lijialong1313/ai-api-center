@@ -14,10 +14,10 @@ import java.util.List;
  * 统一身份认证用户 → 本地管理员账号的开通与同步。
  * <p>
  * 首次登录时创建 {@code admin_users} 记录，之后每次登录刷新姓名 / 部门 / 角色
- * （认证系统的组织信息会变，本地缓存必须跟着变，否则权限判断会过期）。
+ * （组织信息以认证系统为准，本地缓存需随之更新）。
  * <p>
- * <b>管理员判定</b>：{@code allRole} 命中 {@code app.sso.admin-roles} 中任一角色即为管理员。
- * 非管理员可以登录，但只能看到受限页面——绝不因为「能登进统一认证」就授予管理权限。
+ * 管理员判定：{@code allRole} 命中 {@code app.sso.admin-roles} 中任一角色即为管理员。
+ * 认证通过不等于授予管理权限。
  */
 @Service
 public class UserProvisionService {
@@ -63,8 +63,7 @@ public class UserProvisionService {
     /**
      * 是否为管理员：{@code allRole} 命中配置的管理员角色。
      * <p>
-     * 已是 {@code admin} 的账号不会因为本次角色列表未命中而被降级（避免组织架构调整时误封），
-     * 降级需要人工在后台改 {@code role} 字段。
+     * 已是 {@code admin} 的账号不会因本次角色列表未命中而被降级；降级需在后台人工调整。
      */
     public boolean matchesAdminRole(SsoService.SsoUser ssoUser) {
         List<String> roles = ssoUser.allRoles();

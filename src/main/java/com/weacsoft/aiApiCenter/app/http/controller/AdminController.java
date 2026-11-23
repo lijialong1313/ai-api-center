@@ -7,23 +7,22 @@ import com.weacsoft.aiApiCenter.app.service.ApiKeyService;
 import com.weacsoft.aiApiCenter.app.service.BackendPoolService;
 import com.weacsoft.aiApiCenter.app.service.AdminUserService;
 import com.weacsoft.aiApiCenter.app.service.SchedulerConfigCache;
-import com.weacsoft.jaravel.vendor.auth.facade.Auth;
 import com.weacsoft.jaravel.vendor.http.controller.request.Request;
 import com.weacsoft.jaravel.vendor.http.controller.response.Response;
 import com.weacsoft.jaravel.vendor.http.controller.response.ResponseBuilder;
 import org.springframework.stereotype.Controller;
 
 import java.util.List;
-import java.util.Map;
 
 /**
- * 管理后台页面与 REST 接口（文档 §5）：
+ * 管理后台页面与接口（文档 §5）：
  * <ul>
  *   <li>{@code /admin} 首页（概览）</li>
- *   <li>API Key 管理：列表 / 新建 / 改权重 / 启用禁用 / 删除</li>
- *   <li>GPU 后端管理：列表 / 新建 / 编辑 / 启用禁用 / 删除 / 健康检查</li>
+ *   <li>API Key 管理：列表 / 新建 / 改名 / 改权重 / 改等级 / 启停 / 重新生成 / 删除</li>
+ *   <li>GPU 后端管理：列表 / 新建 / 编辑 / 启停 / 删除 / 健康检查</li>
+ *   <li>管理员管理：列表 / 新建 / 编辑 / 切换角色 / 启停 / 删除</li>
  * </ul>
- * 认证由 {@code AdminAuthenticate} + {@code RequireAdmin} 两道中间件保证（见 {@code RouteConfig}）。
+ * 认证与授权由 {@code AdminAuthenticate} + {@code RequireAdmin} 两道中间件保证（见 {@code RouteConfig}）。
  */
 @Controller
 public class AdminController {
@@ -332,9 +331,7 @@ public class AdminController {
     }
 
     /**
-     * 删除账号。
-     * <p>
-     * 最后一个可用管理员不允许删除（否则认证开启后再也没人能进后台）。
+     * 删除账号。最后一个可用管理员不允许删除：否则认证开启后将无法进入管理后台。
      */
     public Response deleteAdminUser(Request request) {
         Long id = parseLong(request.input("id"));

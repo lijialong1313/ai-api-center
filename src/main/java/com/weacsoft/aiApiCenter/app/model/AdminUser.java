@@ -13,13 +13,10 @@ import java.util.List;
 /**
  * 管理员账号，对齐 {@code admin_users} 表。
  * <p>
- * <b>没有口令字段</b>：管理员登录走统一身份认证（OAuth2 授权码），
- * 本系统只保存认证系统返回的身份信息，因此 {@code auth} 模块「密码校验与应用层解耦」
- * 的设计在此场景下自然成立：本系统不校验密码。
- * <p>
- * 主键即 {@code Auth} 的比对依据（{@link #getAuthIdentifier()}），
- * 统一身份认证成功后由 {@code UserProvisionService} 按学工号 {@code upsert} 出本实体，
- * 再 {@code Auth.login(user)} 签发 JWT。
+ * 管理员登录走统一身份认证（OAuth2 授权码），本系统不保存口令，因此没有密码字段。
+ * 主键即 {@code Auth} 的比对依据（{@link #getAuthIdentifier()}）；认证通过后由
+ * {@code UserProvisionService} 按学工号 upsert 出本实体，再 {@code Auth.login(user)}
+ * 签发 JWT。
  */
 @Repository
 @Table(name = "admin_users")
@@ -59,10 +56,10 @@ public class AdminUser extends BaseModel<AdminUser, Long> implements Authenticat
     /**
      * 创建时间。
      * <p>
-     * 用 {@code String} + jaravel 的 {@code TimestampFill} 而不是 {@code LocalDateTime}：
-     * gaarason 会把 {@code LocalDateTime} 序列化成 ISO 形式（{@code 2026-11-20T22:57:29.97}），
-     * 而 SQLite 的 {@code getTimestamp()} 只认 {@code yyyy-MM-dd HH:mm:ss}，读回时会抛
-     * {@code Error parsing time stamp}。用字符串 + 统一格式，跨 SQLite/MySQL 行为一致。
+     * 类型为 {@code String} 并配合 jaravel 的 {@code TimestampFill}：
+     * gaarason 会把 {@code LocalDateTime} 写成 ISO 形式，SQLite 的
+     * {@code getTimestamp()} 只认 {@code yyyy-MM-dd HH:mm:ss}。字符串加统一格式
+     * 在 SQLite / MySQL 下行为一致。
      */
     @Column(name = "created_at", fill = TimestampFill.CreatedTimeStringFill.class)
     private String createdAt;
@@ -78,8 +75,8 @@ public class AdminUser extends BaseModel<AdminUser, Long> implements Authenticat
     /**
      * 按主键查（对齐 {@code Model::find()}）。
      * <p>
-     * 方法名刻意不用 {@code find}：gaarason 的 {@code Model} 已有同名<b>实例</b>方法，
-     * Java 不允许静态方法与继承的实例方法同名同参，会编译失败。
+     * 方法名不用 {@code find}：gaarason 的 {@code Model} 已有同名实例方法，
+     * Java 不允许静态方法与继承的实例方法同名同参。
      */
     public static AdminUser findById(Long id) {
         if (id == null) {

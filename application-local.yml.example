@@ -1,0 +1,13 @@
+# 本机真实凭证示例：复制为 application-local.yml 并填入实际值。
+# application-local.yml 已在 .gitignore 中，不会被提交。
+# 优先级：环境变量 > 本文件 > application.yml。
+app:
+  sso:
+    # 由学校统一身份认证系统管理员分配给本系统的凭证
+    client-id: "填写本系统的 client_id"
+    client-secret: "填写本系统的 client_secret"
+    # 必须与认证系统登记的回调地址完全一致
+    # redirect-uri: "https://your-host/admin/sso/callback"
+
+# 生产部署必须设置，否则重启后所有已签发的 JWT 失效
+# JARAVEL_KEY 建议通过环境变量提供，不放本文件

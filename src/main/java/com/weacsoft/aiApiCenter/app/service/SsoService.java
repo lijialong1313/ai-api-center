@@ -21,18 +21,17 @@ import java.util.Map;
 /**
  * 统一身份认证客户端（广州城市理工学院智慧校园认证系统，文档 v1.0.4）。
  * <p>
- * 本系统<b>只使用 OAuth2 授权码模式</b>（文档第 1 章），流程：
+ * 本系统使用 OAuth2 授权码模式（文档第 1 章），流程：
  * <ol>
  *   <li>浏览器跳到认证系统的 {@code /application/oauth/redirect}（带 client_id / callbackUrl / redirect_uri）；</li>
- *   <li>用户在认证系统页面完成登录（拖动验证码等由认证方处理，本系统不接触用户口令）；</li>
+ *   <li>用户在认证系统页面完成登录（验证码等由认证方处理，本系统不接触用户口令）；</li>
  *   <li>认证系统带 {@code code} 回调本系统的 {@code /admin/sso/callback}；</li>
  *   <li>服务端用 {@code code} 换 {@code access_token}；</li>
  *   <li>服务端用 {@code access_token} 取用户信息（学工号 / 姓名 / 部门 / 角色）。</li>
  * </ol>
  * <p>
- * 文档第 2 章的「接口登录」（DES-CBC 加密口令）本系统<b>不启用</b>：它要求把用户口令
- * 送到服务端，而授权码模式完全不需要口令，安全边界更好。{@link #desEncrypt} 仍保留实现，
- * 供将来确实需要服务端直连登录时使用（文档明确该接口只能服务器请求，并须回传用户端 ip/ua）。
+ * 文档第 2 章的「接口登录」（{@link #apiLogin}，DES-CBC 加密口令）本系统不启用，
+ * 管理后台登录只走授权码模式。该实现与 {@link #desEncrypt} 保留并带有文档测试向量校验。
  */
 @Service
 public class SsoService {
@@ -157,8 +156,7 @@ public class SsoService {
     /**
      * 接口登录（服务端直连，文档第 2 章）。
      * <p>
-     * <b>默认不启用</b>：授权码模式不需要口令，安全边界更好。保留此方法以便确实需要
-     * 「服务端直接收口令」的场景（须回传用户端 ip/ua，否则一个客户端被锁定会波及所有人）。
+     * 本系统不启用。按文档要求，该接口只能由服务器发起，并须回传用户端 ip/ua。
      *
      * @param username    学工号
      * @param rawPassword 明文口令（内部按文档做 DES-CBC 加密）

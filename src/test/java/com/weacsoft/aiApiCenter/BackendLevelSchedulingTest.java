@@ -22,9 +22,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 /**
  * 分级调度测试：某些 GPU 只服务达到指定等级的 API Key。
  * <p>
- * 核心语义是「低等级 Key 不得占用高等级后端的槽位」——这类规则一旦写错，
- * 后果是高价值算力被普通流量占满，且从监控上看只是「GPU 很忙」，很难察觉。
- * 因此这里逐条验证：能进、不能进、以及「不能进时给的原因是否正确」。
+ * 逐条验证三种情况：低等级 Key 被拒、高等级 Key 放行、被拒时返回的原因是否准确。
  */
 @SpringBootTest
 @ActiveProfiles("test")
@@ -86,7 +84,7 @@ class BackendLevelSchedulingTest {
                 .as("等级 0 的 Key 不应被放行到要求等级 2 的后端")
                 .isFalse();
         assertThat(d.reason())
-                .as("原因应明确指出是等级不足，而不是「后端已满」——否则会误导排查方向")
+                .as("原因应指明等级不足，而非「后端已满」")
                 .contains("等级");
     }
 
@@ -148,7 +146,7 @@ class BackendLevelSchedulingTest {
     }
 
     @Test
-    @DisplayName("高等级 Key 优先使用高等级后端（高门槛后端空闲时不应被跳过）")
+    @DisplayName("高等级 Key 可使用高等级或开放后端，且必须满足等级要求")
     void highLevelKeyPrefersExclusiveBackend() {
         ApiKey high = newKey("高等级2", 5, 9);
         newBackend("lv-gpu-only-hi", 4, 5);
@@ -158,8 +156,8 @@ class BackendLevelSchedulingTest {
                 scheduler.decide("lv-req-6", "lv-sess-6", high.getKeyHash(), high.getLevel());
 
         assertThat(d.admitted()).isTrue();
-        // 两个后端都空闲，选择策略是「在途数最少」，平局取先出现的。
-        // 这里只断言它确实选了其中一个合法后端，不锁死顺序（那是实现细节）。
+        // 两个后端都空闲时，选择策略为「在途数最少」，平局取先出现的。
+        // 这里只断言选中了某个合法后端，不锁定顺序。
         assertThat(d.backend().getBackendId())
                 .as("应选中某个满足等级要求的后端")
                 .isIn("lv-gpu-only-hi", "lv-gpu-also-open");
@@ -213,14 +211,14 @@ class BackendLevelSchedulingTest {
     }
 
     @Test
-    @DisplayName("负数等级按 0 处理（防止绕过门槛）")
+    @DisplayName("负数等级按 0 处理")
     void negativeLevelIsClampedToZero() {
         ApiKeyService.CreatedKey created = apiKeyService.create("负数等级", 1, -5);
         keyIds.add(created.key().getId());
 
         ApiKey reloaded = apiKeyService.get(created.key().getId());
         assertThat(reloaded.getLevel())
-                .as("负数等级必须被钳到 0，否则可能出现意外的高权限")
+                .as("负数等级应被钳制为 0")
                 .isEqualTo(0);
     }
 }

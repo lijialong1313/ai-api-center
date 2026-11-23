@@ -37,10 +37,10 @@ public class SchedulerConfigCache {
     /** 进程内权重表：apiKey 主键 → 权重（只含可用 Key） */
     private final Map<Long, WeightEntry> localWeights = new ConcurrentHashMap<>();
 
-    /** 本地缓存的加载时间戳，用于 TTL 兜底刷新（多机无 Redis 时靠它感知别人的修改） */
+    /** 本地缓存的加载时间戳，用于 TTL 刷新（多机无 Redis 时靠它感知其他实例的修改） */
     private volatile long loadedAt = 0L;
 
-    /** 本地权重表的 TTL：即使没人显式失效，也会周期性回源（数据库模式的多机同步兜底） */
+    /** 本地权重表的 TTL：即使没有其他实例显式失效，也会周期性回源（数据库模式的多机同步） */
     private static final long LOCAL_TTL_MS = 10_000L;
 
     /**
@@ -72,7 +72,7 @@ public class SchedulerConfigCache {
     /**
      * 权重失效：后台改过 {@code api_keys} 后调用。
      * <p>
-     * 同时清掉 jaravel Cache 里对应的键，避免别的实例读到旧值。
+     * 同时清掉 jaravel Cache 里对应的键，避免其他实例读到旧值。
      */
     public void invalidateWeights() {
         loadedAt = 0L;

@@ -16,25 +16,17 @@ import java.util.Optional;
 /**
  * 准入调度器：决定「这一次请求现在能不能进 vLLM，进哪个后端」。
  * <p>
- * 对应设计文档 §4.2 的准入流程。本类只做<b>决策</b>，不负责转发；调用方拿到
- * {@link Decision#admitted()} 之后自己去转发，结束时必须调
- * {@link #release(String)} 释放占用的会话与槽位（文档 §9.2 第 6 条：
- * 槽位释放必须在流式 {@code doFinally} 中，不能在收到响应头时释放）。
+ * 本类只做决策，不负责转发。调用方取得 {@link Decision#admitted()} 后自行转发，
+ * 结束时必须调用 {@link #release(String)} 释放会话与槽位（文档 §9.2 第 6 条）。
  * <p>
- * <b>为什么不做成「独立调度循环 + 队列 pop」</b>：
- * 文档 §4 描述的是「客户端短轮询 + 503 Retry-After」模型——客户端每次重试都重新
- * 走一遍准入判断，因此调度决策是<b>请求驱动</b>的，不需要服务端维护一个常驻
- * 调度线程去从队列里捞人。这样做的直接好处是：
+ * 调度模型为请求驱动：客户端按 {@code 503 + Retry-After} 短轮询，每次重试都重新
+ * 走一遍准入判断，服务端不维护常驻调度线程与队列排序。由此：
  * <ul>
- *   <li>没有「调度器取出了请求但客户端已经放弃」的僵尸状态，租约问题天然消失；</li>
- *   <li>排队位置由客户端重试次数体现，无需服务端队列排序；</li>
- *   <li>四种部署模式下行为完全一致，因为决策本身是单次原子操作。</li>
+ *   <li>不存在「调度器取出请求但客户端已放弃」的僵尸状态；</li>
+ *   <li>排队位置由客户端重试行为体现；</li>
+ *   <li>决策本身是单次原子操作，四种部署模式行为一致。</li>
  * </ul>
- * 代价是排队不是严格 FIFO——但设计文档 §4.3 要的本来就是<b>按 Key 加权公平</b>，
- * 而非全局 FIFO，加权轮询的状态在这里已经体现。
- * <p>
- * 若将来需要「服务端主动拉取式」调度（例如支持长时间挂起的单个长连接），
- * 可以在本类之上再加一个基于 {@code QueueDriver} 的循环，本类的决策逻辑可复用。
+ * 排队不保证严格 FIFO；公平性按 Key 权重分配（见 {@link WeightedFairnessGate}）。
  */
 @Component
 public class AdmissionScheduler {
@@ -96,9 +88,8 @@ public class AdmissionScheduler {
     /**
      * 准入决策（带 Key 等级）。
      * <p>
-     * 等级用于分级调度：只考虑 {@code minLevel <= keyLevel} 的后端。
-     * 若所有有空槽的后端都因等级门槛不可用，则视为「当前无可用后端」并让客户端重试
-     * ——而不是放行到不该给它用的机器上。
+     * 只考虑 {@code minLevel <= keyLevel} 的后端。所有有空槽的后端均因等级门槛不可用时，
+     * 返回「等级不足」并让客户端重试，不放行到不该给它使用的后端。
      *
      * @param requestId 请求唯一 id
      * @param sessionId 会话 id
@@ -117,9 +108,9 @@ public class AdmissionScheduler {
         synchronized (decisionLock) {
             syncCapacitiesIfNeeded();
 
-            // 0) 先判该 Key 是否还有被服务的资格 —— 这是终态判断，必须在「会话忙/槽位满」
-            //    这些可重试判断之前：否则一个已停用的 Key 会收到 503 + Retry-After，
-            //    客户端按指示持续重试，始终无法成功，徒增负载。
+            // 0) 终态判断：Key 已停用或权重为 0 时不再服务，且不返回 Retry-After。
+            //    必须排在「会话忙 / 槽位满」这些可重试判断之前，否则已停用的 Key
+            //    会收到 503 并按指示持续重试，始终无法成功。
             Map<String, Integer> weights = configCache.weights();
             Integer thisWeight = weights.get(keyHash);
             if (thisWeight == null || thisWeight <= 0) {
@@ -140,8 +131,7 @@ public class AdmissionScheduler {
                     continue;
                 }
                 // 等级门槛：该后端只服务达到 minLevel 的 Key。
-                // 单独计数是为了在「全被等级挡住」时给出准确原因——
-                // 否则运维会判断为「后端已满」，从而排查无关方向。
+                // 单独计数，用于在「全被等级挡住」时返回准确原因。
                 if (!backend.allowsLevel(keyLevel)) {
                     levelBlocked++;
                     continue;
@@ -156,14 +146,8 @@ public class AdmissionScheduler {
                 return Decision.reject(retryAfterSeconds(), "所有 GPU 后端已满");
             }
 
-            // 3) 加权公平
-            //
-            // 采用配额制：将权重视为「服务额度」。记录每个 Key 在统计窗口内已服务次数，
-            // 与该 Key 应得份额（weight / totalWeight）比较；份额未用完则放行，用完后让路。
-            //
-            // 该方式适用于请求驱动模型：每个 Key 是否被服务由其自身请求触发，
-            // 不要求所有候选者同时排队。因此某个 Key 静默时，其额度不会被他人占用，
-            // 也不会因「选中了无请求的 Key」而损耗额度。
+            // 3) 加权公平：配额制。权重视为服务额度，比较窗口内已服务次数与应得份额
+            //    （weight / totalWeight）；份额未用完则放行，用完后让路。
             if (weights.isEmpty()) {
                 return Decision.reject(retryAfterSeconds(), "没有可用的 API Key");
             }
@@ -181,10 +165,8 @@ public class AdmissionScheduler {
 
             // 5) 落闸：同时占会话与槽位
             if (!state.tryAcquire(requestId, sessionId, chosen.getBackendId())) {
-                // 极小概率：刚检查完就被别的线程抢走。
-                // 必须把上一行 fairness.allow() 记的额度还回去 —— 否则这次放行
-                // 该 Key 的额度被占用一次，却未获得对应服务，
-                // 长期看会让实际比例低于它应得的权重。
+                // 并发下刚检查完就被其他线程抢占。必须回滚上一步 fairness.allow() 的记账，
+                // 否则该 Key 消耗了额度却没有获得服务，长期比例低于其权重。
                 fairness.rollback(keyHash);
                 return Decision.reject(retryAfterSeconds(), "槽位竞争失败，稍后重试");
             }
@@ -196,8 +178,8 @@ public class AdmissionScheduler {
     /**
      * 释放某次请求占用的会话与槽位。
      * <p>
-     * <b>必须在流式响应彻底结束后调用</b>（{@code doFinally}），不能在收到响应头时调——
-     * 否则 vLLM 还在生成，下一个请求就被放进去了，单并发被打破（文档 §9.2 第 6 条）。
+     * 必须在流式响应彻底结束后调用（{@code doFinally}），不能在收到响应头时调用
+     * （文档 §9.2 第 6 条）。
      *
      * @param requestId 请求 id
      */
@@ -208,11 +190,9 @@ public class AdmissionScheduler {
     /**
      * 定期把后台配置的后端容量同步进 {@link AdmissionState}。
      * <p>
-     * <b>为什么要先判「容量表为空就立即同步」</b>：{@code AdmissionState} 可能被
-     * {@code reset()} 清空（测试、或运维在后台整体重建后端时），而节流基于时间戳，
-     * 若清空后仍在节流窗口内，本轮决策读到的容量全是 0，会把所有请求判成「后端已满」
-     * ——表现为「刚启动/刚清空后一段时间内，所有请求都 503」。
-     * 因此容量表为空时必须跳过节流，立刻回源。
+     * 容量表为空时跳过节流立即回源：{@code AdmissionState} 可能被 {@code reset()} 清空
+     * （测试或运维整体重建后端），若仍按时间戳节流，本轮决策读到的容量全为 0，
+     * 会把所有请求判成「后端已满」。
      */
     private void syncCapacitiesIfNeeded() {
         boolean stateEmpty = backendPoolService.schedulable().stream()
@@ -233,24 +213,21 @@ public class AdmissionScheduler {
     /**
      * Retry-After 启发式估算（文档 §4.5）。
      * <p>
-     * 思路：在途请求平均还要多久才会释放一个槽位。没有历史数据时给一个温和的默认值，
-     * 保证客户端不会高频空转；上下限避免极端值。
+     * 按在途请求数给一个保守切片，并夹在上下限之间。
      *
      * @return 建议重试秒数
      */
     private int retryAfterSeconds() {
-        // 若所有槽位都在忙，估算「一个请求平均耗时」的一个保守切片
         int inflight = state.totalInflight();
-        int estimate = Math.max(MIN_RETRY_AFTER_SECONDS, Math.min(MAX_RETRY_AFTER_SECONDS,
+        return Math.max(MIN_RETRY_AFTER_SECONDS, Math.min(MAX_RETRY_AFTER_SECONDS,
                 inflight <= 0 ? 2 : 2 + inflight));
-        return estimate;
     }
 
     /**
      * 本轮轮到别的 Key 时给一个更短的重试间隔。
      * <p>
-     * 权重越高，说明它被选中的频率越高，等待应该越短：
-     * {@code retryAfter = base * totalWeight / weight}，并夹在
+     * 权重越高，被选中的频率越高，等待应越短：
+     * {@code retryAfter = base * totalWeight / weight}，夹在
      * [{@link #MIN_RETRY_AFTER_SECONDS}, {@link #MAX_RETRY_AFTER_SECONDS}] 之间。
      *
      * @param weight 本 Key 权重

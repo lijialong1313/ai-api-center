@@ -15,13 +15,8 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 /**
  * 免认证模式（{@code app.admin.auth-enabled=false}）的行为测试。
  * <p>
- * <b>为什么单独一个类</b>：这与 {@link AdminBaseIntegrationTest} 是两套互斥的语义——
- * 那边验证「没登录就进不去」，这边验证「不登录也能进」。两者的 Spring 上下文配置不同
- * （不同的 property），必须分开，否则会互相覆盖属性。
- * <p>
- * 这个模式是为「学校还没分配 SSO 的 client-id / client-secret，但需要先把后台跑起来看」
- * 准备的。它<b>不安全</b>，因此同时要验证：控制器在「没有真实登录态」时也不会 500
- * （页面需显示当前用户，取值缺失会导致渲染失败）。
+ * 与 {@link AdminBaseIntegrationTest} 的 Spring 上下文配置互斥（认证开 / 关），
+ * 必须分成两个测试类。免认证模式下同时要验证控制器在没有真实登录态时不报 500。
  */
 @SpringBootTest
 @org.springframework.test.context.ActiveProfiles("test")
@@ -36,15 +31,15 @@ class AdminAuthDisabledTest {
     private AdminAccessProperties properties;
 
     @Test
-    @DisplayName("配置项确实读到了 false（防止测试跑在错误的模式上）")
+    @DisplayName("配置项确实读到了 false（确认测试运行在预期模式）")
     void authIsDisabled() {
         org.assertj.core.api.Assertions.assertThat(properties.isAuthEnabled())
-                .as("本类必须在免认证模式下运行，否则以下断言没有意义")
+                .as("本类应在免认证模式下运行")
                 .isFalse();
     }
 
     @Test
-    @DisplayName("免认证：不登录直接访问 /admin 应 200，而不是 302 到登录页")
+    @DisplayName("免认证：不登录直接访问 /admin 应 200")
     void adminHomeIsAccessibleWithoutLogin() throws Exception {
         mockMvc.perform(get("/admin")).andExpect(status().isOk());
     }

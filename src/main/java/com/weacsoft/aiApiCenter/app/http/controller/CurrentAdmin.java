@@ -10,9 +10,8 @@ import org.springframework.stereotype.Component;
 /**
  * 「当前展示用管理员」的统一取用入口。
  * <p>
- * <b>为什么需要它</b>：后台页面普遍要显示右上角的「谁登录了」。
- * 认证关闭时（{@code app.admin.auth-enabled=false}）{@code Auth.guard("admin").user()}
- * 返回 {@code null}，模板里 {@code {{ $user->getName() }}} 会直接抛空指针把页面打成 500。
+ * 后台页面需要显示当前登录者。认证关闭时 {@code Auth.guard("admin").user()}
+ * 返回 {@code null}，模板取值会抛空指针。
  * <p>
  * 取值顺序：
  * <ol>
@@ -20,8 +19,8 @@ import org.springframework.stereotype.Component;
  *   <li>{@code Auth.guard("admin").user()} —— 正常登录态。</li>
  * </ol>
  * <p>
- * 注意这是<b>展示层</b>用的取法，不能拿它做权限判断：免认证模式下的虚拟管理员
- * 并不代表真实登录。权限判断仍走 {@code RequireAdmin} 中间件。
+ * 本类仅供展示层使用，不能用于权限判断：免认证模式下的虚拟管理员不代表真实登录态。
+ * 权限判断仍由 {@code RequireAdmin} 中间件负责。
  */
 @Component
 public class CurrentAdmin {
@@ -49,12 +48,10 @@ public class CurrentAdmin {
     }
 
     /**
-     * 取当前管理员；没有时返回一个仅用于展示的占位对象。
-     * <p>
-     * 模板渲染场景用这个：宁可显示「未登录」，也不让页面 500。
+     * 取当前管理员；没有时返回一个仅用于展示的占位对象，永不返回 {@code null}。
      *
      * @param request 当前请求
-     * @return 管理员或占位对象，永不返回 {@code null}
+     * @return 管理员或占位对象
      */
     public AdminUser ofOrAnonymous(Request request) {
         AdminUser admin = of(request);

@@ -44,8 +44,8 @@
 <div class="card">
     <h2>快速开始</h2>
     <ol class="muted">
-        <li>在「API Key 管理」新建一个 Key（明文仅显示一次，请立即保存）。</li>
-        <li>在「GPU 后端管理」填入 vLLM 地址与容量（多数后端容量为 1），并做一次健康检查。</li>
+        <li>在「API Key 管理」新建一个 Key，复制明文用于客户端配置。</li>
+        <li>在「GPU 后端管理」填入 vLLM 地址与容量（多数后端容量为 1），并执行一次健康检查。</li>
         <li>把 DSH 的 Provider baseURL 指向本中间件的 <span class="mono">/v1</span>，
             API Key 填第 1 步得到的值，并确保请求头带 <span class="mono">x-session-id</span>。</li>
     </ol>

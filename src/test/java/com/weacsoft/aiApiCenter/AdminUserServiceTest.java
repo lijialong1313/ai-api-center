@@ -14,12 +14,11 @@ import static org.assertj.core.api.Assertions.assertThat;
 /**
  * 管理员账号管理的业务规则测试。
  * <p>
- * 重点不在 CRUD 本身，而在两条<b>会把人锁在门外</b>的规则：
+ * 覆盖两条关键规则：
  * <ol>
- *   <li>不能删掉最后一个可用管理员 —— 否则认证一开，谁都进不了后台；</li>
- *   <li>学工号必须唯一 —— 否则同一个人会有两条权限记录，出现「停用了这条、那条还能用」。</li>
+ *   <li>不能删除最后一个可用管理员；</li>
+ *   <li>学工号必须唯一。</li>
  * </ol>
- * 这两条都是「写错了平时看不出来、出事时很难救」的类型，必须有测试钉住。
  */
 @SpringBootTest
 @org.springframework.test.context.ActiveProfiles("test")
@@ -52,7 +51,7 @@ class AdminUserServiceTest {
 
             AdminUser second = adminUserService.create(staffNo, "李四", "admin");
             assertThat(second)
-                    .as("学工号重复必须拒绝，否则会有两条权限记录互相矛盾")
+                    .as("学工号重复必须拒绝")
                     .isNull();
         } finally {
             cleanup(staffNo);
@@ -75,7 +74,7 @@ class AdminUserServiceTest {
             AdminUser user = adminUserService.create(staffNo, "测试", "SuperAdmin");
             assertThat(user).isNotNull();
             assertThat(user.getRole())
-                    .as("非法角色值必须降级为 user，绝不能因为拼错就提权")
+                    .as("非法角色值应降级为 user")
                     .isEqualTo("user");
         } finally {
             cleanup(staffNo);
@@ -94,9 +93,9 @@ class AdminUserServiceTest {
             AdminUser promoted = adminUserService.toggleRole(user.getId());
             assertThat(promoted.getRole()).isEqualTo("admin");
             assertThat(promoted.getRoleName())
-                    .as("roleName 必须跟着变，否则界面显示与权限不一致").isEqualTo("admin");
+                    .as("roleName 应与 role 同步").isEqualTo("admin");
             assertThat(promoted.getAllRoles())
-                    .as("allRoles 必须跟着变").isEqualTo("admin");
+                    .as("allRoles 应与 role 同步").isEqualTo("admin");
 
             AdminUser demoted = adminUserService.toggleRole(user.getId());
             assertThat(demoted.getRole()).isEqualTo("user");
@@ -119,7 +118,7 @@ class AdminUserServiceTest {
             AdminUser reloaded = adminUserService.get(user.getId());
             assertThat(reloaded.getRole()).as("角色字段不变").isEqualTo("admin");
             assertThat(reloaded.isAdmin())
-                    .as("停用后不应算作可用管理员 —— 否则「停用」形同虚设")
+                    .as("停用后不应算作可用管理员")
                     .isFalse();
         } finally {
             cleanup(staffNo);
@@ -127,11 +126,10 @@ class AdminUserServiceTest {
     }
 
     @Test
-    @DisplayName("不能删除最后一个可用管理员（认证开启后会把所有人锁在门外）")
+    @DisplayName("不能删除最后一个可用管理员")
     void cannotDeleteLastActiveAdmin() {
-        // 这个用例必须自造前提，不能依赖环境里「恰好有几个管理员」——
-        // 之前那版写法按现有数量分支，测试执行顺序一变前提就不成立，结果时红时绿。
-        // 这里先把所有管理员停用，只留自己这一个可用的，再断言删除被拒。
+        // 自造前提：先把其他管理员临时停用，使本用例有一个确定的初始状态，
+        // 结束时恢复。
         String staffNo = "TEST-LAST-001";
         cleanup(staffNo);
 
@@ -153,7 +151,7 @@ class AdminUserServiceTest {
 
             boolean deleted = adminUserService.delete(created.getId());
             assertThat(deleted)
-                    .as("最后一个可用管理员绝不能被删除")
+                    .as("最后一个可用管理员不应被删除")
                     .isFalse();
             assertThat(adminUserService.get(created.getId()))
                     .as("拒绝删除后账号应仍在").isNotNull();

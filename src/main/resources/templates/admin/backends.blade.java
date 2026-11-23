@@ -51,9 +51,9 @@
         </div>
         <p class="muted" style="margin:12px 0 0">
             容量对应槽位数：同一时刻该后端最多允许「容量」个请求在途。vLLM 的
-            <span class="mono">max_num_seqs=1</span> 时应填 1，否则将超出后端承载能力。<br>
-            上游 API Key 是<b>该后端自己的</b>凭证：客户端拿的是中间件颁发的
-            <span class="mono">sk-ac-*</span>；转发时须替换为本字段的值，否则上游返回 401。<br>
+            <span class="mono">max_num_seqs=1</span> 时应填 1，超出将导致后端过载。<br>
+            上游 API Key 是该后端自己的凭证：客户端使用中间件颁发的
+            <span class="mono">sk-ac-*</span>，转发时须替换为本字段的值，否则上游返回 401。<br>
             最低 Key 等级用于把本后端保留给高等级 Key：设为 1 时，只有等级 &ge; 1 的 Key
             才会被调度到它上面；0 表示对所有等级开放。
         </p>

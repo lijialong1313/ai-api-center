@@ -9,12 +9,7 @@ import org.springframework.context.annotation.Configuration;
 /**
  * 启动时的安全自检。
  * <p>
- * 目前只做一件事：当管理后台认证被关闭时，在启动日志里打一条<b>不可能被忽略</b>的告警。
- * <p>
- * 为什么要在启动时就喊：{@code app.admin.auth-enabled=false} 之后，
- * 任何能访问到该端口的人都可以创建/删除 API Key、改 GPU 后端地址、看到全部配置。
- * 这类「为了本地联调临时关掉、后来忘了」的设置是真实事故的常见来源，
- * 所以把提醒放在每次启动必经的路径上，而不是写在文档里等人去读。
+ * 当 {@code app.admin.auth-enabled=false} 时，在启动日志输出安全告警。
  */
 @Configuration
 public class StartupSecurityCheck {

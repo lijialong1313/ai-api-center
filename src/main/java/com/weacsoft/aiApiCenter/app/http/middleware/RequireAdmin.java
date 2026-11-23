@@ -10,12 +10,11 @@ import com.weacsoft.jaravel.vendor.http.middleware.Middleware;
 /**
  * 管理员授权中间件：在 {@link AdminAuthenticate} 之后挂载。
  * <p>
- * <b>认证 ≠ 授权</b>：能通过统一身份认证的人很多（全体师生），但只有
- * {@code allRole} 命中 {@code app.sso.admin-roles} 的账号才是后台管理员。
- * 这里做第二道闸门，非管理员访问后台返回 403，而不是把管理功能暴露给所有登录用户。
+ * 认证不等于授权：能通过统一身份认证的师生很多，只有 {@code role=admin} 且账号启用的
+ * 才是后台管理员，非管理员访问后台返回 403。
  * <p>
  * 每次请求都从库里取最新 {@link AdminUser}（框架的 provider 不缓存用户对象），
- * 所以后台把某人 {@code role} 改成 {@code user} 或 {@code enabled=false} 后即刻失效。
+ * 因此后台调整角色或停用账号后立即失效。
  */
 public class RequireAdmin implements Middleware {
 

@@ -11,19 +11,14 @@ import java.util.List;
 /**
  * 管理员账号管理。
  * <p>
- * <b>与统一身份认证的关系</b>：正常情况下管理员账号是「第一次用 SSO 登录时自动开通」的
- * （见 {@link UserProvisionService}），不需要人工创建。但这个管理界面仍然必要，原因是
- * 现实中经常需要<b>预先授权</b>：
+ * 管理员账号通常在首次统一身份认证登录时自动开通（见 {@link UserProvisionService}）。
+ * 本服务用于预先授权与人工调整：
  * <ul>
- *   <li>某人还没登录过，但要先给他管理员权限，等他第一次登录就生效；</li>
- *   <li>某人已登录但角色判断没命中（比如他的 {@code allRole} 不在
- *       {@code app.sso.admin-roles} 里），需要单独提权；</li>
- *   <li>离职 / 转岗时立即停用，而不是等他自己来登录才被拦。</li>
+ *   <li>某人尚未登录过，先按学工号建立管理员记录，其首次登录即生效；</li>
+ *   <li>某人已登录但角色未命中 {@code app.sso.admin-roles}，需要单独提权；</li>
+ *   <li>离职或转岗时立即停用。</li>
  * </ul>
- * <p>
- * <b>权限提升是显式的</b>：这里把 {@code role} 改成 {@code admin} 是唯一的提权途径，
- * 且只对已经存在于库里的账号有效。未登录过的人需要先由人工建立记录（填学工号），
- * 等他首次 SSO 登录时会按学工号匹配到这条记录，不会被重新创建成普通用户。
+ * 提权只能通过本服务把 {@code role} 置为 {@code admin} 完成。
  */
 @Service
 public class AdminUserService {
@@ -85,7 +80,7 @@ public class AdminUserService {
      * 修改账号的角色与启用状态。
      * <p>
      * 只更新传入的非空字段。角色切换会同步 {@code roleName / allRoles}，
-     * 避免界面上出现「role=admin 但 allRoles 显示学生」这种自相矛盾。
+     * 保持界面显示与权限一致。
      *
      * @param id      主键
      * @param role    新角色，null 表示不改
@@ -97,13 +92,10 @@ public class AdminUserService {
     }
 
     /**
-     * 修改姓名 / 角色 / 启用状态。
+     * 修改姓名 / 角色 / 启用状态。每个参数 {@code null} 表示不修改。
      * <p>
-     * 每个参数 {@code null} 表示不修改。姓名允许清空（存 null）。
-     * <p>
-     * 注意：姓名和部门这类字段在用户下次 SSO 登录时会被认证系统返回的值覆盖——
-     * 那是设计如此（组织信息以认证系统为准）。所以这里改的姓名主要用于
-     * 「还没登录过的预先授权账号」，以及临时备注。
+     * 姓名与部门在该用户下次统一身份认证登录时会被认证系统返回的值覆盖
+     * （组织信息以认证系统为准）。
      *
      * @param id      主键
      * @param name    姓名，null=不改
@@ -122,7 +114,6 @@ public class AdminUserService {
         if (role != null && !role.isBlank()) {
             String normalized = normalizeRole(role);
             user.setRole(normalized);
-            // 保持一致：否则界面上「角色=管理员」而「全部角色=学生」会让人无法判断实际权限
             user.setRoleName(normalized);
             user.setAllRoles(normalized);
         }
@@ -151,13 +142,10 @@ public class AdminUserService {
     }
 
     /**
-     * 删除账号。
-     * <p>
-     * <b>会阻止删最后一个可用管理员</b>：否则一旦删光，在认证开启的情况下
-     * 将无法再进入管理后台（除非直接修改数据库），形成难以恢复的阻塞。
+     * 删除账号。最后一个可用管理员不允许删除。
      *
      * @param id 主键
-     * @return 删除成功返回 true；不存在或是最后一个管理员返回 false
+     * @return 删除成功返回 true；不存在或是最后一个可用管理员返回 false
      */
     public boolean delete(Long id) {
         AdminUser user = AdminUser.findById(id);
@@ -174,16 +162,15 @@ public class AdminUserService {
     }
 
     /**
-     * 判断该账号是否是「最后一个可用的管理员」。
-     * <p>
-     * 停用的、非 admin 的都不算数——只有还能真正登录并管理后台的才算。
+     * 判断该账号是否是最后一个可用的管理员。
+     * 已停用或非 admin 角色的账号不计入。
      *
      * @param user 待删账号
      * @return 是最后一个返回 true
      */
     private boolean isLastActiveAdmin(AdminUser user) {
         if (!user.isAdmin()) {
-            return false;   // 本来就不是可用管理员，删了不影响
+            return false;
         }
         long activeAdmins = AdminUser.all().stream().filter(AdminUser::isAdmin).count();
         return activeAdmins <= 1;

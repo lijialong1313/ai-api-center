@@ -16,12 +16,11 @@ import java.util.List;
 /**
  * API Key 管理（文档 §5.2）。
  * <p>
- * <b>明文不落库</b>：库里只存 {@code SHA-256} 与 8 位前缀。明文只在「新建」这一刻返回，
- * 后台列表里永远看不到完整 Key——这是 API Key 类系统的通用做法，
- * 避免一次数据库泄露就让全部 Key 失效。
+ * 鉴权按 {@code key_hash}（SHA-256）查询；{@code key_value} 存明文，
+ * 供后台随时查看与复制。界面默认打码，日志不输出该字段。
  * <p>
- * 权重改动会同步清理调度器的本地权重缓存（见 {@link SchedulerConfigCache}），
- * 保证「改完立即生效」，不需要重启或等 TTL。
+ * 权重或启停状态变更后调用 {@link SchedulerConfigCache#invalidateWeights()}，
+ * 使调度器立即读到新配置。
  */
 @Service
 public class ApiKeyService {
@@ -44,7 +43,7 @@ public class ApiKeyService {
      *
      * @param label  可读名称
      * @param weight 相对权重（&lt;=0 会被纠正为 1）
-     * @return 新建结果，{@code plaintext} 为唯一一次可见的明文
+     * @return 新建结果，{@code plaintext} 为明文
      */
     public CreatedKey create(String label, int weight) {
         return create(label, weight, 0);
@@ -138,9 +137,7 @@ public class ApiKeyService {
     /**
      * 重新生成 Key 明文（保留名称、权重、启用状态与主键）。
      * <p>
-     * <b>为什么需要</b>：Key 泄露或丢失时需要「换一个」，但删了重建会丢历史
-     * （id 变了、名字要重填）。原地换值保住所有元数据，客户端只需更新一个字符串。
-     * <p>
+     * Key 泄露或丢失时原地换值：元数据保留，客户端只需更新一个字符串。
      * 换值后旧 Key 立即失效——鉴权按 {@code key_hash} 查询，哈希已改。
      *
      * @param id 主键
@@ -232,8 +229,8 @@ public class ApiKeyService {
     /**
      * 新建结果。
      *
-     * @param key       已持久化的实体（不含明文）
-     * @param plaintext Key 明文，<b>仅此一次</b>可见
+     * @param key       已持久化的实体
+     * @param plaintext Key 明文
      */
     public record CreatedKey(ApiKey key, String plaintext) {
     }

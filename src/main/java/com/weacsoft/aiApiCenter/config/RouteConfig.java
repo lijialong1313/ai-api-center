@@ -15,13 +15,12 @@ import java.util.Map;
 /**
  * 路由注册（对齐 Laravel {@code routes/web.php}）。
  * <p>
- * <b>管理后台与 DSH 流量彻底分离</b>（文档 §9.2 第 9 条）：
+ * 管理后台与 DSH 流量分离（文档 §9.2 第 9 条）：
  * <ul>
- *   <li>DSH 走 {@code /v1/**}（OpenAI 兼容端点，后续接入调度层）；</li>
+ *   <li>DSH 走 {@code /v1/**}（OpenAI 兼容端点）；</li>
  *   <li>管理后台走 {@code /admin/**}，挂 {@link AdminAuthenticate} + {@link RequireAdmin} 两道中间件。</li>
  * </ul>
- * 登录相关路由（{@code /admin/login}、{@code /admin/sso/callback}）<b>不挂认证中间件</b>，
- * 否则会陷入「要先登录才能登录」的死循环。
+ * 登录相关路由（{@code /admin/login}、{@code /admin/sso/callback}）不挂认证中间件。
  */
 @Configuration
 public class RouteConfig {
@@ -77,9 +76,8 @@ public class RouteConfig {
 
             // ---------- 管理后台：需要登录 + 管理员权限 ----------
             //
-            // app.admin.auth-enabled=false 时整段跳过认证，方便在没有统一身份认证凭据的
-            // 阶段本地试用。此时直接用虚拟管理员访问，页面不会因为「没有当前用户」而崩。
-            // 安全提示：关闭后任何人都能改 Key 与后端地址，只能在本机联调用。
+            // app.admin.auth-enabled=false 时跳过认证，改用虚拟管理员，供本机联调使用。
+            // 关闭后任何能访问该端口的人都能改 Key 与后端地址，不得对外暴露。
             admin.group(Map.of(), protectedAdmin -> {
                 if (adminAccess.isAuthEnabled()) {
                     protectedAdmin.middleware(new AdminAuthenticate());

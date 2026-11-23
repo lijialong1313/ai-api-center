@@ -59,10 +59,8 @@ public class BackendPool extends BaseModel<BackendPool, Long> {
     /**
      * 访问该上游所需的 API Key。
      * <p>
-     * <b>与客户端 Key 的区别</b>：客户端拿的是中间件颁发的 {@code sk-ac-*}，
-     * 中转发时必须换成后端自己的 Key，否则上游会 401。
-     * <p>
-     * 存明文——转发时要原样取用，无法哈希。界面上只回显掩码。
+     * 与客户端 Key 不同：客户端拿的是中间件颁发的 {@code sk-ac-*}，转发时必须换成
+     * 后端自己的 Key，否则上游返回 401。转发时需原样取用，因此存明文；界面只回显掩码。
      */
     @Column(name = "api_key")
     private String apiKey;
@@ -101,7 +99,7 @@ public class BackendPool extends BaseModel<BackendPool, Long> {
     /**
      * 按主键查。
      * <p>
-     * 方法名不叫 {@code find}：与 gaarason {@code Model} 的实例方法同名同参会让编译失败。
+     * 方法名不用 {@code find}：与 gaarason {@code Model} 的实例方法同名同参会让编译失败。
      */
     public static BackendPool findById(Long id) {
         if (id == null) {
@@ -201,10 +199,7 @@ public class BackendPool extends BaseModel<BackendPool, Long> {
     }
 
     /**
-     * Key 的掩码形式，供界面回显。
-     * <p>
-     * 只露前 6 后 4，中间固定星号——既能让运维确认「填的是哪个 Key」，
-     * 又不会把完整凭证留在页面上（截图、录屏、共享屏幕都可能泄露）。
+     * Key 的掩码形式，供界面回显：只露前 6 位与后 4 位。
      *
      * @return 掩码；无 Key 返回空串
      */

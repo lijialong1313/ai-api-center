@@ -11,17 +11,13 @@ import com.weacsoft.jaravel.vendor.http.middleware.Middleware;
  * {@code app.admin.auth-enabled=false} 时替代 {@code AdminAuthenticate} + {@code RequireAdmin}
  * 两道中间件，直接放行。
  * <p>
- * <b>它为什么需要做点事，而不只是一个空中间件</b>：
- * {@code AdminController} 里普遍写着 {@code Auth.guard("admin").user()} 来取当前登录者，
- * 用于页面右上角展示。认证关掉后这个调用返回 {@code null}，模板里
- * {@code {{ $user->getName() }}} 就会抛空指针，后台直接 500。
- * <p>
- * 因此本类把一个<b>未持久化的</b> {@link AdminUser} 放进请求属性
- * （{@code current_admin}），控制器再优先读它。注意：
+ * 放行同时向请求属性写入一个未持久化的 {@link AdminUser}：控制器普遍通过
+ * {@code Auth.guard("admin").user()} 取当前登录者用于页面展示，认证关闭后该调用
+ * 返回 {@code null}，模板取值会抛空指针。本类写入的虚拟账号供其读取。
  * <ul>
- *   <li>它<b>不写库</b>，不产生任何真实账号；</li>
- *   <li>它不是登录态，{@code Auth.check()} 仍为 false；</li>
- *   <li>一旦把 {@code auth-enabled} 改回 true，本类完全不参与。</li>
+ *   <li>不写库，不产生真实账号；</li>
+ *   <li>不是登录态，{@code Auth.check()} 仍为 false；</li>
+ *   <li>{@code auth-enabled} 为 true 时本类不参与。</li>
  * </ul>
  */
 public class LocalDevAdminShim implements Middleware {

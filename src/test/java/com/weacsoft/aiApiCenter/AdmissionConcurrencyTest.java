@@ -2,7 +2,6 @@ package com.weacsoft.aiApiCenter;
 
 import com.weacsoft.aiApiCenter.app.scheduler.AdmissionScheduler;
 import com.weacsoft.aiApiCenter.app.scheduler.AdmissionState;
-import com.weacsoft.aiApiCenter.app.scheduler.SmoothWeightedRoundRobin;
 import com.weacsoft.aiApiCenter.app.service.ApiKeyService;
 import com.weacsoft.aiApiCenter.app.service.BackendPoolService;
 import org.junit.jupiter.api.AfterEach;
@@ -28,14 +27,12 @@ import static org.assertj.core.api.Assertions.assertThat;
 /**
  * 准入调度层的并发正确性测试。
  * <p>
- * 设计文档 §9.1 的六条不变量里，前两条是并发相关的硬约束：
+ * 覆盖设计文档 §9.1 前两条并发不变量：
  * <ol>
  *   <li>同一 {@code sessionId} 任意时刻最多一个请求处于「转发到 vLLM」状态；</li>
  *   <li>每个后端在途请求数不超过其 {@code capacity}。</li>
  * </ol>
- * 这两条一旦被击穿，后果是 vLLM 被并发打爆（{@code max_num_seqs=1} 时直接 OOM 或排队超时）。
- * 单线程测试无法发现竞态，所以这里全部用<b>真实线程池</b>并发打，并在断言里直接读
- * 「峰值同时在途数」——不是看最终状态，而是看过程中有没有越界过。
+ * 使用真实线程池并发调用，断言读取峰值同时在途数，而非最终状态。
  */
 @SpringBootTest
 @org.springframework.test.context.ActiveProfiles("test")
@@ -117,9 +114,8 @@ class AdmissionConcurrencyTest {
                         int now = concurrentInside.incrementAndGet();
                         peakConcurrent.accumulateAndGet(now, Math::max);
                         admittedCount.incrementAndGet();
-                        // 持有槽位一段时间：制造「其他线程在此期间尝试进入」的重叠窗口。
-                        // 必须够长（>> 线程调度抖动），否则其他线程在放行者已 release 后才跑到，
-                        // 看到的都是空闲状态，测不出并发违约。
+                        // 持有槽位 60ms：制造其他线程在此期间尝试进入的重叠窗口，
+                        // 窗口需明显大于线程调度抖动，否则测不出并发违约。
                         Thread.sleep(60);
                         concurrentInside.decrementAndGet();
                         scheduler.release(requestId);
@@ -139,7 +135,7 @@ class AdmissionConcurrencyTest {
         pool.shutdownNow();
 
         assertThat(peakConcurrent.get())
-                .as("同一 session 的峰值同时在途数必须为 1，否则会话串行被击穿")
+                .as("同一 session 的峰值同时在途数必须为 1")
                 .isEqualTo(1);
         assertThat(admittedCount.get()).as("应有请求被放行").isGreaterThan(0);
         assertThat(admittedCount.get() + rejectedCount.get()).as("每个请求都应有着落")
@@ -201,7 +197,7 @@ class AdmissionConcurrencyTest {
         pool.shutdownNow();
 
         assertThat(peakConcurrent.get())
-                .as("后端峰值在途数不得超过 capacity=2，否则 vLLM 会被打爆")
+                .as("后端峰值在途数不得超过 capacity=2")
                 .isLessThanOrEqualTo(2);
         assertThat(admitted.get()).as("应有请求被放行").isGreaterThan(0);
         assertThat(rejected.get()).as("容量满时应产生拒绝（503 来源）").isGreaterThan(0);
@@ -225,7 +221,7 @@ class AdmissionConcurrencyTest {
         assertThat(state.isSessionBusy(sessionId)).isTrue();
         assertThat(state.inflightOf(backendId)).isEqualTo(1);
 
-        // 未释放前，同会话再请求必须被拒
+        // 未释放前，同会话的再次请求应被拒绝
         AdmissionScheduler.Decision second = scheduler.decide("r2", sessionId, key.key().getKeyHash());
         assertThat(second.admitted()).as("同会话未释放时应拒绝").isFalse();
 
@@ -255,7 +251,7 @@ class AdmissionConcurrencyTest {
     }
 
     @Test
-    @DisplayName("缺少 x-session-id 必须拒绝（文档 §9.2 第 7 条）")
+    @DisplayName("缺少 x-session-id 应拒绝（文档 §9.2 第 7 条）")
     void missingSessionIdIsRejected() {
         ApiKeyService.CreatedKey key = newKey("无会话测试", 5);
         newBackend("conc-nosess-gpu", 2);

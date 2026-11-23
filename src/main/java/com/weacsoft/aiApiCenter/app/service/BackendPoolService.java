@@ -115,8 +115,8 @@ public class BackendPoolService {
     /**
      * 修改后端。只更新传入的非空字段。
      * <p>
-     * <b>容量变更</b>（文档 §5.3）：容量对应槽位计数，改动后必须让调度器的槽位状态同步；
-     * 这里统一 invalidate 配置缓存，槽位在下一轮调度时按新容量重建。
+     * 容量对应槽位计数（文档 §5.3），改动后统一 invalidate 配置缓存，
+     * 槽位在下一轮调度时按新容量重建。
      */
     public BackendPool update(Long id, String name, String baseUrl, Integer capacity,
                               Boolean enabled, String healthPath) {
@@ -126,8 +126,8 @@ public class BackendPoolService {
     /**
      * 修改后端（含上游鉴权）。
      * <p>
-     * {@code apiKey} 传 {@code null} 表示「不改」；传空字符串表示「清空」。
-     * 这样界面上不填就保留原值，填了才覆盖 —— 避免每次改容量都要重填 Key。
+     * {@code apiKey} 传 {@code null} 表示不修改；传空字符串表示清空。
+     * 界面上「留空保持不变」的交互依赖这两种语义的区分。
      *
      * @param id           主键
      * @param name         名称

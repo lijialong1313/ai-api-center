@@ -18,9 +18,9 @@ import org.springframework.core.env.Environment;
  * 默认连接别名 {@code sqlite}（单机零配置，文件库），Model 未标注 {@code @DataSource} 时使用。
  * 生产环境把 {@code spring.datasource.*} 换成 MySQL 即可，业务代码无需改动。
  * <p>
- * <b>ContainerBootstrap 只能有一个</b>：gaarason 要求所有 {@code GaarasonDataSource} 共用同一实例，
- * 否则 Model 注册表会分裂到不同容器导致查询报错。因此这里只创建一次并交给框架的
- * {@link ConnectionManager} 保管。
+ * gaarason 要求所有 {@code GaarasonDataSource} 共用同一个 {@code ContainerBootstrap}
+ * 实例，否则 Model 注册表会分裂到不同容器导致查询报错。因此这里只创建一次，
+ * 并交给框架的 {@link ConnectionManager} 保管。
  */
 @Configuration
 public class DatabaseConfig {
@@ -33,19 +33,13 @@ public class DatabaseConfig {
      */
     @Bean
     public ContainerBootstrap containerBootstrap(@Autowired Environment env) {
-        // 关键：gaarason 要求「全进程唯一」的 ContainerBootstrap。
-        // ConnectionManager.setContainer(不同实例) 会直接抛
-        //   IllegalStateException: 检测到重复的 ContainerBootstrap 实例
-        // 以下两种场景必然触发：
-        //   1) 同一 JVM 里创建第二个 Spring 上下文（例如测试同时跑 MOCK 上下文和
-        //      RANDOM_PORT 上下文）；
-        //   2) 热重载 / 多次 SpringApplication.run。
+        // ContainerBootstrap 必须全进程唯一：ConnectionManager.setContainer(不同实例)
+        // 会抛 IllegalStateException。同一 JVM 内创建第二个 Spring 上下文（不同测试
+        // 上下文）或热重载都会触发。
         //
-        // 但注意：不能用 ConnectionManager.container() 来判断「是否已有」——
-        // 该方法在容器为空时会**自己建一个未初始化的空容器**并缓存，拿它复用会缺
-        // QueryBuilderConfig 等注册项，后续查询报
-        //   NoSuchMethodException: gaarason.database.config.QueryBuilderConfig.<init>()
-        // 因此改为通过 hasAnyConnection() 判断「是否已经完成过一次真实初始化」。
+        // 复用判断用 hasAnyConnection()，不能用 ConnectionManager.container()：后者在
+        // 容器为空时会自行创建一个未初始化的空容器，缺少 QueryBuilderConfig 等注册项，
+        // 后续查询报 NoSuchMethodException: QueryBuilderConfig.<init>()。
         if (ConnectionManager.hasAnyConnection()) {
             ContainerBootstrap existing = ConnectionManager.container();
             if (existing != null) {
@@ -93,8 +87,8 @@ public class DatabaseConfig {
         if (password != null) {
             druid.setPassword(password);
         }
-        // Druid 默认 testWhileIdle=true 但 validationQuery 为空，启动时会打 ERROR 日志。
-        // 显式给一个校验查询，消掉噪音（SQLite / MySQL 都支持 SELECT 1）。
+        // Druid 默认 testWhileIdle=true 但 validationQuery 为空，启动时会输出 ERROR 日志。
+        // 显式设置校验查询（SQLite / MySQL 均支持 SELECT 1）。
         druid.setValidationQuery("SELECT 1");
         return GaarasonDataSourceBuilder.build(druid, bootstrap);
     }

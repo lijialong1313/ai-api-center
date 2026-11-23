@@ -49,7 +49,7 @@
     @if(isset($configured) && $configured)
     <a class="btn" href="/admin/login">使用统一身份认证登录</a>
     <div class="hint">
-        登录由学校统一身份认证系统完成，本系统不接触你的口令。
+        登录由学校统一身份认证系统完成，本系统不接触用户口令。
     </div>
     @else
     <div class="alert alert-warn">

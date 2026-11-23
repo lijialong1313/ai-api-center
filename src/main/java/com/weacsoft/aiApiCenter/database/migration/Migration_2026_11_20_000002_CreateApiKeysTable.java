@@ -26,12 +26,8 @@ public class Migration_2026_11_20_000002_CreateApiKeysTable implements Migration
             table.booleanColumn("enabled").notNull().defaultValue(true);
             table.timestamp("last_used_at").nullable();
             table.timestamps();
-            // 软删除列：BaseModel 统一启用软删除（softDeleting() 恒 true），
-            // newQuery() 会无条件附加 "deleted_at IS NULL"。
-            // 因此每张继承 BaseModel 的表都必须有这一列，否则查询报
-            //   no such column: xxx.deleted_at
-            // 业务上若不需要「回收站」语义，日常查询看到的永远只是未删除行，
-            // 行为等同于没有软删除，只是多一列、条件更明确。
+            // 软删除列：BaseModel 的 softDeleting() 恒为 true，newQuery() 会附加
+            // "deleted_at IS NULL"，因此每张继承 BaseModel 的表都必须有这一列。
             table.softDeletes();
             // 索引随建表语句一并创建（Schema.create 会执行 blueprint 收集的索引 SQL）
             table.index("enabled");

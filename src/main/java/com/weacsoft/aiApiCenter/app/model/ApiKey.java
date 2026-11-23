@@ -12,10 +12,10 @@ import java.util.List;
 /**
  * API Key，对齐 {@code api_keys} 表（文档 §5.2）。
  * <p>
- * 库中只保存 Key 的 {@code SHA-256}（{@link #keyHash}）与用于识别的 8 位前缀，
- * <b>明文只在创建时返回一次</b>。调度器按 {@link #weight} 做平滑加权轮询，
+ * 鉴权按 {@link #keyHash}（SHA-256）查询；{@code keyValue} 存明文，供后台复制。
+ * 调度按 {@link #weight} 分配服务额度，按 {@link #level} 做分级过滤。
  * <p>
- * 注意：{@code weight} 为 0 或 {@code enabled=false} 的 Key，中间件直接拒绝。
+ * {@code weight} 为 0 或 {@code enabled=false} 的 Key，中间件直接拒绝。
  */
 @Repository
 @Table(name = "api_keys")
@@ -36,7 +36,7 @@ public class ApiKey extends BaseModel<ApiKey, Long> {
     @Column(name = "label")
     private String label;
 
-    /** 平滑加权轮询的相对权重，默认 1 */
+    /** 相对权重，默认 1，用于按权重分配服务额度 */
     @Column(name = "weight")
     private Integer weight;
 
@@ -49,10 +49,7 @@ public class ApiKey extends BaseModel<ApiKey, Long> {
     /**
      * Key 明文，供管理后台复制。
      * <p>
-     * <b>安全影响</b>：本字段以明文存储，数据库泄露即可直接使用全部 Key；
-     * 仅存哈希时无法由哈希反推 Key。
-     * <p>
-     * 缓解措施：界面默认显示掩码，需手动展开；日志不输出该字段。
+     * 明文存储意味着数据库泄露即可直接使用全部 Key。界面默认显示掩码，日志不输出该字段。
      * 鉴权通过 {@link #keyHash} 查询，本字段仅用于展示与复制。
      */
     @Column(name = "key_value")
@@ -79,7 +76,7 @@ public class ApiKey extends BaseModel<ApiKey, Long> {
     /**
      * 按主键查。
      * <p>
-     * 方法名不叫 {@code find}：与 gaarason {@code Model} 的实例方法同名同参会让编译失败。
+     * 方法名不用 {@code find}：与 gaarason {@code Model} 的实例方法同名同参会让编译失败。
      */
     public static ApiKey findById(Long id) {
         if (id == null) {

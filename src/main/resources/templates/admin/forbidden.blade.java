@@ -27,7 +27,7 @@
 <body>
 <div class="box">
     <h1>无访问权限</h1>
-    <p>你的账号可以通过统一身份认证登录，但没有管理后台权限。</p>
+    <p>当前账号可以通过统一身份认证登录，但没有管理后台权限。</p>
     @if(isset($user) && $user != null)
     <div class="who">
         <strong>{{ $user->getName() }}</strong>（{{ $user->getStaffNo() }}）<br>

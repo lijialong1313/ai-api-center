@@ -11,15 +11,13 @@ import org.springframework.context.annotation.Configuration;
 /**
  * 认证配置，对齐 Laravel {@code config/auth.php}。
  * <p>
- * 管理员使用<b>统一身份认证</b>登录，本系统不保存口令；密码校验环节并不存在，
- * 因此 {@code auth} 模块「密码校验与应用层解耦」的设计在这里天然成立。
+ * 管理员使用统一身份认证登录，本系统不保存口令。
  * <p>
- * 守卫 {@code admin} 使用 {@code jwt} 驱动（引入 {@code jwt} 模块后自动可用）：
- * 认证系统回调成功后 {@code Auth.login(admin)} 签发 token，后续 {@code /admin/**}
- * 由 {@code Authenticate("admin")} 中间件校验 Bearer token。
+ * 守卫 {@code admin} 使用 {@code jwt} 驱动：认证系统回调成功后 {@code Auth.login(admin)}
+ * 签发 token，后续 {@code /admin/**} 由认证中间件校验。
  * <p>
  * 提供者 {@code admins} 绑定 {@link AdminUser}，{@code retrieveById} 每次从库里取最新记录，
- * 所以后台禁用账号能立即生效，不会被请求级缓存挡住。
+ * 因此后台禁用账号立即生效。
  */
 @Configuration
 public class AuthConfig {

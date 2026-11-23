@@ -29,16 +29,14 @@ import static org.assertj.core.api.Assertions.assertThat;
 /**
  * {@code /v1/**} 网关端到端测试。
  * <p>
- * 前面几个测试类验证的是调度器「决策」是否正确；这里验证<b>整条链路</b>：
+ * 其余测试类验证调度决策，这里验证整条链路：
  * 真实 HTTP 请求 → 路由 → 鉴权 → 准入 → 转发到上游 → 响应回传。
  * <p>
- * 上游用进程内 {@link HttpServer} 冒充 vLLM，好处是不需要真 GPU、且能精确控制
- * 上游返回什么（正常 JSON / SSE 流 / 500 / 慢响应），从而验证
- * 「流式是否真的边收边发」「错误是否原样透传」。
+ * 上游用进程内 {@link HttpServer} 模拟 vLLM，可控制其返回内容
+ * （正常 JSON / SSE 流 / 500 / 慢响应），用于验证流式透传与错误透传。
  * <p>
- * <b>关键约束</b>：网关把 {@code /v1/<path>} <b>原样转发</b>到上游的同一路径，
- * 因此各测试只能通过「重设 {@code /v1/chat/completions} 的行为」来换上游表现，
- * 不能另建 {@code /v1/stream} 之类的新路径——网关侧没有对应路由，会先 404。
+ * 网关把 {@code /v1/<path>} 原样转发到上游的同一路径，因此各测试通过重设
+ * {@code /v1/chat/completions} 的 context 来切换上游行为，不新建其他路径。
  */
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 @org.springframework.test.context.ActiveProfiles("test")
@@ -51,10 +49,8 @@ class OpenAiGatewayEndToEndTest {
     private BackendPoolService backendPoolService;
 
     /**
-     * 准入状态是单例，测试之间必须显式重置。
-     * <p>
-     * 漏了这一步的后果：上一个用例占用的会话/槽位会残留，下一个用例明明逻辑正确却拿到
-     * 503——排查方向会被误导到调度器上，而真正原因是测试没清场。
+     * 准入状态是单例，测试之间必须显式重置，否则上一个用例残留的会话与槽位
+     * 会让下一个用例拿到 503。
      */
     @Autowired
     private AdmissionState admissionState;
@@ -70,7 +66,7 @@ class OpenAiGatewayEndToEndTest {
             .connectTimeout(Duration.ofSeconds(5))
             .build();
 
-    /** 上游收到的最后一次请求（断言我们真的把内容转过去了） */
+    /** 上游收到的最后一次请求，用于断言内容确实被转发 */
     private final AtomicReference<String> lastUpstreamBody = new AtomicReference<>();
     private final AtomicReference<String> lastUpstreamPath = new AtomicReference<>();
     private final AtomicReference<String> lastUpstreamSessionHeader = new AtomicReference<>();
@@ -130,7 +126,7 @@ class OpenAiGatewayEndToEndTest {
         resetChatContext();
         upstream.createContext("/v1/chat/completions", exchange -> {
             exchange.getRequestBody().readAllBytes();
-            byte[] body = "{\"error\":{\"message\":\"upstream exploded\"}}".getBytes(StandardCharsets.UTF_8);
+            byte[] body = "{\"error\":{\"message\":\"upstream internal error\"}}".getBytes(StandardCharsets.UTF_8);
             exchange.getResponseHeaders().add("Content-Type", "application/json");
             exchange.sendResponseHeaders(500, body.length);
             try (OutputStream out = exchange.getResponseBody()) {
@@ -139,7 +135,7 @@ class OpenAiGatewayEndToEndTest {
         });
     }
 
-    /** 慢响应：用于占住会话，制造「在前」的在途请求。 */
+    /** 慢响应：用于占用会话，制造在途请求。 */
     private void upstreamIsSlow(long millis) {
         resetChatContext();
         upstream.createContext("/v1/chat/completions", exchange -> {
@@ -170,17 +166,16 @@ class OpenAiGatewayEndToEndTest {
     }
 
     /**
-     * 安全地清除 /v1/chat/completions 的旧 context。
+     * 清除 /v1/chat/completions 的旧 context。
      * <p>
      * {@code HttpServer.removeContext} 对不存在的路径会抛
-     * {@code IllegalArgumentException: cannot remove element from list}，
-     * 所以不能无脑先 remove —— 用 {@code getContext} 判存在。
+     * {@code IllegalArgumentException}，首次调用时该路径尚未注册，需忽略该异常。
      */
     private void resetChatContext() {
         try {
             upstream.removeContext("/v1/chat/completions");
         } catch (IllegalArgumentException ignored) {
-            // 首次调用时该路径尚不存在，removeContext 会抛此异常，忽略即可
+            // 该路径尚不存在
         }
     }
 
@@ -221,8 +216,8 @@ class OpenAiGatewayEndToEndTest {
 
         assertThat(response.statusCode()).as("应转发成功").isEqualTo(200);
         assertThat(response.body()).as("应原样返回上游 body").contains("chatcmpl-test");
-        assertThat(lastUpstreamPath.get()).as("必须真的打到上游").isEqualTo("/v1/chat/completions");
-        assertThat(lastUpstreamBody.get()).as("请求体必须原样转发").isEqualTo(payload);
+        assertThat(lastUpstreamPath.get()).as("请求应到达上游").isEqualTo("/v1/chat/completions");
+        assertThat(lastUpstreamBody.get()).as("请求体应原样转发").isEqualTo(payload);
         assertThat(lastUpstreamSessionHeader.get()).as("session 头应透传给上游")
                 .isEqualTo("e2e-sess-1");
     }
@@ -238,14 +233,14 @@ class OpenAiGatewayEndToEndTest {
 
         assertThat(response.statusCode()).isEqualTo(200);
         assertThat(response.headers().firstValue("Content-Type").orElse(""))
-                .as("SSE 的 Content-Type 必须保留").contains("text/event-stream");
+                .as("SSE 的 Content-Type 应保留").contains("text/event-stream");
         assertThat(response.body())
                 .as("三个 chunk 与结束标记都应到达客户端")
                 .contains("chunk\":0").contains("chunk\":1").contains("chunk\":2").contains("[DONE]");
     }
 
     @Test
-    @DisplayName("上游 5xx 原样透传（不把错误包装成 200）")
+    @DisplayName("上游 5xx 原样透传")
     void passesUpstreamErrorStatusThrough() throws Exception {
         upstreamReturns500();
         var key = newKey("e2e-错误");
@@ -253,8 +248,8 @@ class OpenAiGatewayEndToEndTest {
         HttpResponse<String> response =
                 post("/v1/chat/completions", key.plaintext(), "e2e-sess-boom", "{}");
 
-        assertThat(response.statusCode()).as("上游 500 必须原样透传").isEqualTo(500);
-        assertThat(response.body()).contains("upstream exploded");
+        assertThat(response.statusCode()).as("上游 500 应原样透传").isEqualTo(500);
+        assertThat(response.body()).contains("upstream internal error");
     }
 
     // ==================== 鉴权与会话校验 ====================
@@ -289,7 +284,7 @@ class OpenAiGatewayEndToEndTest {
         upstreamIsSlow(1200);
         var key = newKey("e2e-503");
 
-        // 先发一个占住该会话（异步，不等它返回）
+        // 先发一个请求占用该会话（异步，不等待返回）
         Thread holder = new Thread(() -> {
             try {
                 post("/v1/chat/completions", key.plaintext(), "e2e-busy-sess", "{}");
@@ -297,17 +292,17 @@ class OpenAiGatewayEndToEndTest {
             }
         });
         holder.start();
-        Thread.sleep(400);   // 确保它已进入转发
+        Thread.sleep(400);   // 等待其进入转发阶段
 
         HttpResponse<String> second =
                 post("/v1/chat/completions", key.plaintext(), "e2e-busy-sess", "{}");
 
         assertThat(second.statusCode())
-                .as("同会话并发必须返回 503，绝不能用 429（文档 §9.2 第 2 条）")
+                .as("同会话并发应返回 503（文档 §9.2 第 2 条：不使用 429）")
                 .isEqualTo(503);
         var retryAfterHeader = second.headers().firstValue("Retry-After");
         assertThat(retryAfterHeader)
-                .as("必须带 Retry-After，否则客户端不知该等多久").isPresent();
+                .as("应携带 Retry-After 头").isPresent();
         assertThat(Integer.parseInt(retryAfterHeader.orElse("0")))
                 .as("Retry-After 应为正数秒").isGreaterThan(0);
 

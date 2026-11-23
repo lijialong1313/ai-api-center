@@ -10,6 +10,10 @@ spring:
       connection-test-query: SELECT 1
   mvc:
     throw-exception-if-no-handler-found: false
+  config:
+    # 本机真实凭证写在项目根目录的 application-local.yml（已 gitignore），
+    # 仓库内只保留占位符与 application-local.yml.example 模板
+    import: "optional:file:./application-local.yml"
 
 server:
   port: ${SERVER_PORT:8090}
@@ -22,8 +26,9 @@ logging:
     com.weacsoft.jaravel.vendor: INFO
 
 jaravel:
-  # 应用密钥：JWT 验签 / Cookie 加密 / 验证码均派生自它，多实例必须一致
-  # 未配置时框架会用进程级随机临时密钥，重启后所有 JWT 立即失效
+  # 应用密钥：JWT 验签 / Cookie 加密 / 验证码均派生自它，多实例必须一致。
+  # 生产部署必须设置 JARAVEL_KEY 环境变量；此处的默认值只是占位符，
+  # 未设置时框架改用进程级随机密钥，重启后所有 JWT 失效。
   key: "${JARAVEL_KEY:please-set-JARAVEL_KEY-in-production}"
   # ---------- 迁移：业务表由 migration 模块统一建表 ----------
   migration:
@@ -91,13 +96,17 @@ jaravel:
 app:
   # 管理后台访问控制
   admin:
-    # false = 跳过统一身份认证，任何人不登录即可进后台。
-    # 仅用于没有 SSO 凭据阶段的本机联调；对外暴露前必须改回 true。
-    auth-enabled: "${ADMIN_AUTH_ENABLED:false}"
+    # true：完整认证与授权；false：跳过登录，仅限本机联调，启动时输出安全告警
+    auth-enabled: "${ADMIN_AUTH_ENABLED:true}"
+    # 启动时确保存在的管理员工号；留空关闭本机制。已存在时不修改任何字段
+    bootstrap-admin-staff-no: "${BOOTSTRAP_ADMIN_STAFF_NO:2019095}"
+    # 该工号的显示名称，留空时使用工号本身
+    bootstrap-admin-name: "${BOOTSTRAP_ADMIN_NAME:}"
   # 统一身份认证（广州城市理工学院智慧校园认证系统 OAuth2.0，文档 v1.0.4）
   sso:
     enabled: ${SSO_ENABLED:true}
     base-url: ${SSO_BASE_URL:https://auth.gcu.edu.cn}
+    # 由认证系统管理员分配。仓库内保持占位符，真实值写入 application-local.yml
     client-id: ${SSO_CLIENT_ID:}
     client-secret: ${SSO_CLIENT_SECRET:}
     # 认证系统跳回本系统的地址，必须与认证系统登记的一致；留空则按当前请求推导

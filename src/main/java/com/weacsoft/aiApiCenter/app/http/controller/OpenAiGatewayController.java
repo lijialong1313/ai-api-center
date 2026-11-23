@@ -22,23 +22,19 @@ import java.util.UUID;
 /**
  * OpenAI 兼容网关 {@code /v1/**}：DSH 的唯一入口。
  * <p>
- * 走 jaravel 自己的路由与 {@link Response} 契约——<b>不另起一套</b>。
- * 流式与普通响应共用同一个 {@code Response} 类型：
+ * 走 jaravel 的路由与 {@link Response} 契约。流式与普通响应共用同一个 {@code Response} 类型：
  * <ul>
  *   <li>成功且上游返回 SSE/流：{@code ResponseBuilder.stream(...)}，边产边写；</li>
  *   <li>鉴权失败、排队中、上游错误：{@code ResponseBuilder.error(...)}，普通 JSON。</li>
  * </ul>
- * 两者都是 {@code Response}，因此可以共存于同一个处理方法，不存在
- * 「一个方法只能返回一种形态」的限制。
  * <p>
  * 准入流程（文档 §4.2）：
  * <ol>
  *   <li>鉴权：{@code Authorization: Bearer <key>}，按 SHA-256 查表；</li>
  *   <li>会话：读 {@code x-session-id}，缺失直接 400（§9.2 第 7 条）；</li>
- *   <li>准入：{@link AdmissionScheduler#decide}；拒绝时
- *       <b>503 + Retry-After</b>（§4.5，明确不用 429）；</li>
- *   <li>转发：原样把请求体送给后端，响应逐块透传；</li>
- *   <li>释放：在流式写出结束后释放槽位（§9.2 第 6 条）。</li>
+ *   <li>准入：{@link AdmissionScheduler#decide}；拒绝时返回 503 + Retry-After（§4.5）；</li>
+ *   <li>转发：请求体原样送给后端，响应逐块透传；</li>
+ *   <li>释放：流式写出结束后释放槽位（§9.2 第 6 条）。</li>
  * </ol>
  */
 @Controller
@@ -52,17 +48,13 @@ public class OpenAiGatewayController {
     private final ApiKeyService apiKeyService;
     private final AdmissionScheduler scheduler;
 
-    /** 复用客户端实例：内部带连接池 */
     /**
      * 转发用 HTTP 客户端。
      * <p>
-     * <b>必须锁定 HTTP/1.1</b>：JDK HttpClient 默认会对明文 http 尝试向 h2c 升级
+     * 必须锁定 HTTP/1.1：JDK HttpClient 默认对明文 http 尝试 h2c 升级
      * （发出 {@code Upgrade: h2c} + {@code HTTP2-Settings} 头）。vLLM 前置的
-     * uvicorn/starlette 对 h2c 升级支持不完整，表现为<b>上游无法读取请求体</b>，
+     * uvicorn/starlette 对 h2c 升级支持不完整，表现为上游读不到请求体，
      * 返回 400 {@code {"detail":[{"loc":["body"],"msg":"Field required"}]}}。
-     * <p>
-     * 此类故障难以从日志判断：网关日志显示已转发，抓包亦可见 95 字节 body 正确发出，
-     * 但上游就是认为 body 为空 —— 根因在传输层协商，不在业务代码。
      */
     private final HttpClient httpClient = HttpClient.newBuilder()
             .version(HttpClient.Version.HTTP_1_1)
@@ -135,14 +127,9 @@ public class OpenAiGatewayController {
                             body.length == 0 ? HttpRequest.BodyPublishers.noBody()
                                     : HttpRequest.BodyPublishers.ofByteArray(body));
 
-            // 上游鉴权：用该后端自己的 Key，绝不转发客户端那把。
-            //
-            // 为什么必须换：客户端拿的是中间件颁发的 sk-ac-*，vLLM 不认识它，
-            // 直接把客户端的 Authorization 转过去一定 401。
-            //
-            // 两个细节：
-            //   1) 头名可配（默认 Authorization），因为少数网关用 api-key；
-            //   2) 值是 Bearer 形式（与 OpenAI 兼容端点一致）。
+            // 上游鉴权：使用该后端自己的 Key。客户端提交的是中间件颁发的 sk-ac-*，
+            // vLLM 不予识别，直接转发客户端的 Authorization 会得到 401。
+            // 头名可配（默认 Authorization），值为 Bearer 形式。
             if (backend.hasApiKey()) {
                 requestBuilder.header(backend.resolvedAuthHeader(),
                         "Bearer " + backend.getApiKey());
@@ -176,11 +163,11 @@ public class OpenAiGatewayController {
 
         // 流式响应：边读边写，逐块 flush（对应设计文档 §9.2 第 6 条）。
         //
-        // SSE 的结束判定以协议终结标记 {@code data: [DONE]} 为准，不以读取到流末尾为准。
-        // 原因：HttpRequest.timeout 不中断 body InputStream 上的阻塞读取；且 HTTP/1.1
-        // keep-alive 下上游发送 [DONE] 后连接可能被复用而不返回 EOF。若仅依赖 EOF，
-        // 转发线程会阻塞至超时，期间会话与槽位持续占用，导致同会话后续请求持续返回 503。
-        // 非流式响应（JSON，含 Content-Length）读取到末尾即自然结束，EOF 语义成立。
+        // SSE 的结束判定以协议终结标记 data: [DONE] 为准，不以读取到流末尾为准：
+        // HttpRequest.timeout 不中断 body InputStream 上的阻塞读取；HTTP/1.1 keep-alive
+        // 下上游发送 [DONE] 后连接可能被复用而不返回 EOF。若仅依赖 EOF，转发线程会
+        // 阻塞至超时，期间会话与槽位持续占用，同会话后续请求持续返回 503。
+        // 非流式响应（JSON，含 Content-Length）读取到末尾即自然结束。
         final boolean sseFinal = sse;
         Response response = ResponseBuilder.stream(status, contentType, outputStream -> {
             try (InputStream in = upstreamResponse.body()) {
@@ -207,7 +194,7 @@ public class OpenAiGatewayController {
             }
         });
 
-        // SSE 额外关闭代理缓冲，否则 nginx 会把流攒起来一次性发
+        // SSE 额外关闭代理缓冲：nginx 默认会缓冲响应流，攒满后一次性发送
         if (sse && response instanceof ResponseBuilder.StreamResponse streamResponse) {
             streamResponse.header("Cache-Control", "no-cache");
             streamResponse.header("X-Accel-Buffering", "no");
@@ -233,10 +220,9 @@ public class OpenAiGatewayController {
     /**
      * 取请求体原始字节。
      * <p>
-     * <b>必须用 {@link Request#rawBody()}，不能自己读 {@code getInputStream()}</b>：
-     * {@code RequestFactory} 解析 JSON 时已经把 servlet 输入流读掉了，再读只会得到空内容。
-     * 而且代理必须转发<b>原始字节</b>——用 {@code request.input()} 重新序列化会
-     * 丢字段、改顺序、改变数字精度（对 LLM 请求尤其危险，token 计费依赖原样内容）。
+     * 必须用 {@link Request#rawBody()}：{@code RequestFactory} 解析 JSON 时已经读完
+     * servlet 输入流，再读只会得到空内容。代理必须转发原始字节——用
+     * {@code request.input()} 重新序列化会丢字段、改变顺序与数字精度。
      *
      * @param request jaravel 请求
      * @return 原始字节；无 body 时返回空数组
@@ -273,15 +259,12 @@ public class OpenAiGatewayController {
     }
 
     /**
-     * 忙时响应：{@code 503 + Retry-After}。
-     * <p>
-     * 设计文档 §4.5 明确要求「不要用 429」：429 的语义是「配额用尽、别再来」，
-     * 而这里是「排队中、稍后重试」，用 503 才能让客户端按 Retry-After 正常重试。
+     * 忙时响应：{@code 503 + Retry-After}（文档 §4.5）。
      */
     private Response busy(AdmissionScheduler.Decision decision) {
         var retryAfter = decision.retryAfterSeconds();
         if (retryAfter.isEmpty()) {
-            // 终态（如 Key 停用）：403 而非 503，避免客户端无限重试放大负载
+            // 终态（如 Key 停用）：403，不引导客户端重试
             return ResponseBuilder.error(403, decision.reason());
         }
         int seconds = retryAfter.get();
@@ -289,8 +272,8 @@ public class OpenAiGatewayController {
                 .status(503)
                 .contentType("application/json;charset=utf-8")
                 .header("Retry-After", String.valueOf(seconds))
-                // HTTP 头只能是 ISO-8859-1；中文原因会让容器抛编码异常，
-                // 把本该 503 的响应变成 500，客户端就不再按 Retry-After 重试了。
+                // HTTP 头只能是 ISO-8859-1，中文原因会让容器抛编码异常，
+                // 把 503 变成 500，客户端就不再按 Retry-After 重试。
                 .header("X-Queue-Reason", asciiReason(decision.reason()));
         raw.body("{\"error\":{\"message\":\"排队中，请按 Retry-After 重试\","
                 + "\"type\":\"queue_full\",\"retry_after\":" + seconds + "}}");

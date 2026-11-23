@@ -10,18 +10,13 @@ import com.weacsoft.jaravel.vendor.http.middleware.Middleware;
 /**
  * 管理后台认证中间件：{@code /admin/**} 统一挂载。
  * <p>
- * 与框架自带的 {@code Authenticate} 的差别只有一点，但很关键：
- * <b>浏览器访问后台时 JWT 在 Cookie 里，而不是 {@code Authorization: Bearer}</b>。
- * 框架的 {@code JwtGuard} 只认 Authorization 头，所以这里在进入守卫前把 Cookie
- * 里的 token 补写成 Authorization 头，让 JWT 守卫能正常解析——一处适配，
- * 页面与 API 共用同一套令牌校验逻辑。
+ * 与框架自带的 {@code Authenticate} 的差别：浏览器访问后台时 JWT 在 Cookie 里，
+ * 而框架的 {@code JwtGuard} 只读 {@code Authorization} 头。这里在进入守卫前把
+ * Cookie 中的 token 补写成 Authorization 头，页面与 API 共用同一套令牌校验。
  * <p>
- * <b>必须写到 {@link AuthContext#get()} 的那个请求上</b>，而不是中间件拿到的
- * {@code request} 参数：框架路由层会先 {@code buildFromServerRequest} 出一个 Request
- * 放进 {@code AuthContext}，之后才把<b>另外</b>一个 Request 实例交给中间件链。
- * 二者并非同一实例（{@code AuthContext.get() == request} 为 false），
- * 改错对象的话守卫读到的仍是原始请求，Cookie 里的 token 永远补不上——
- * 表现为「带 Authorization 头能过、只带 Cookie 一定 302」。
+ * 补写必须同时作用于 {@link com.weacsoft.jaravel.vendor.auth.AuthContext#get()} 持有的
+ * 请求对象：框架路由层先构造一个 Request 放进 {@code AuthContext}，之后交给中间件链的是
+ * 另一个实例，两者不是同一对象。只改中间件参数那个对象，守卫读到的仍是原始请求。
  * <p>
  * 未登录时：页面请求 302 到 {@code /admin/login}；JSON 请求返回 401。
  */

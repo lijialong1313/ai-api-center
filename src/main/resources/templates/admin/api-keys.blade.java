@@ -9,7 +9,7 @@
     <span class="mono" id="newKeyValue">{{ $newKey }}</span>
     <button type="button" class="btn btn-sm" onclick="copyText('{{ $newKey }}', this)">复制</button>
     <div style="margin-top:6px;font-size:12px">
-        这个值之后仍可在下方列表中查看与复制，不会丢失。
+        该值可在下方列表中随时查看与复制。
     </div>
 </div>
 @endif
@@ -35,7 +35,7 @@
             </div>
         </div>
         <p class="muted" style="margin:12px 0 0">
-            权重用于平滑加权轮询：权重 5 的 Key 大约获得 5 倍服务机会，权重 1 的 Key 有保底、不会被饿死。<br>
+            权重用于按额度分配服务机会：权重 5 的 Key 约获得 5 倍服务比例，权重 1 的 Key 亦有保底份额。<br>
             等级用于分级调度：某些 GPU 可设「最低等级」，只有达到该等级的 Key 才会被调度到它上面。0 为默认等级。
         </p>
     </form>
@@ -61,7 +61,7 @@
         <tr>
             <td>{{ $key->getId() }}</td>
             <td>
-                {{-- 名称就地编辑：单独一个小表单，避免与权重互相影响 --}}
+                {{-- 名称就地编辑：独立小表单，与权重提交互不影响 --}}
                 <form method="post" action="/admin/api-keys/update" class="inline-form">
                     <input type="hidden" name="id" value="{{ $key->getId() }}">
                     <div class="actions">
@@ -147,8 +147,8 @@
     /**
      * 复制文本到剪贴板，并给按钮一个短暂的"已复制"反馈。
      *
-     * 为什么用 execCommand 兜底：后台可能通过 http（非 https）访问，
-     * 而 navigator.clipboard 只在 secure context 下可用。
+     * navigator.clipboard 仅在 secure context 可用；后台可能通过 http 访问，
+     * 因此保留 execCommand 回退路径。
      */
     function copyText(text, btn) {
         if (!text) { return; }

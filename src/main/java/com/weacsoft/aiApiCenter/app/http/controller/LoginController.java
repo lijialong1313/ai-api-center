@@ -13,27 +13,20 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Controller;
 
-import java.net.URLEncoder;
-import java.nio.charset.StandardCharsets;
-import java.util.Map;
-
 /**
- * 管理员登录：走<b>统一身份认证</b>（OAuth2 授权码），本系统不接触用户口令。
+ * 管理员登录：走统一身份认证（OAuth2 授权码），本系统不接触用户口令。
  * <p>
  * 流程：
  * <ol>
  *   <li>{@code GET /admin/login} → 未登录时 302 到认证系统授权页；</li>
- *   <li>用户在认证系统完成登录（拖动验证码等由认证方处理）；</li>
+ *   <li>用户在认证系统完成登录（验证码等由认证方处理）；</li>
  *   <li>{@code GET /admin/sso/callback?code=...} → 服务端换 token、取用户信息；</li>
  *   <li>按学工号开通/更新本地 {@link AdminUser}，{@code Auth.login(user)} 签发 JWT；</li>
  *   <li>把 JWT 写入 Cookie（浏览器访问后台用）后 302 到管理首页。</li>
  * </ol>
  * <p>
- * 同时提供 {@code POST /admin/login} 的 JSON 入口给纯 API 调用方：它<b>不接受口令</b>，
- * 而是接受已拿到的 JWT 做校验；真正的登录仍然只能通过统一身份认证。
- * <p>
- * <b>管理员判定</b>：{@code allRole} 命中 {@code app.sso.admin-roles} 才授予 {@code admin}。
- * 非管理员也能登录，但访问后台会被 {@code RequireAdmin} 中间件拦下（403 页面）。
+ * 管理员判定：{@code allRole} 命中 {@code app.sso.admin-roles} 才授予 {@code admin}。
+ * 非管理员可以登录，访问后台时由 {@code RequireAdmin} 中间件返回 403 页面。
  */
 @Controller
 public class LoginController {
@@ -65,7 +58,7 @@ public class LoginController {
             return ResponseBuilder.redirect("/admin");
         }
         if (!ssoProperties.isConfigured()) {
-            // 未配置 client_id/secret 时不能跳认证，给出明确提示而不是白屏
+            // 未配置 client_id/secret 时不能跳认证，渲染提示页
             return ResponseBuilder.view("admin.login", ResponseBuilder.map(
                     "title", "管理员登录",
                     "configured", false,
@@ -184,7 +177,7 @@ public class LoginController {
         return scheme + "://" + host + contextPath + "/admin/sso/callback";
     }
 
-    /** 登录失败页面（把原因回显给用户，而不是抛 500） */
+    /** 登录失败页面：渲染登录页并回显原因 */
     private Response failPage(String message) {
         return ResponseBuilder.view("admin.login", ResponseBuilder.map(
                 "title", "管理员登录",
@@ -210,10 +203,5 @@ public class LoginController {
         cookie.setHttpOnly(true);
         cookie.setMaxAge(0);
         return cookie;
-    }
-
-    /** URL 编码（回调失败原因放进 query 时用） */
-    private static String encode(String value) {
-        return URLEncoder.encode(value == null ? "" : value, StandardCharsets.UTF_8);
     }
 }

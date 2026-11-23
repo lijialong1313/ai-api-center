@@ -7,12 +7,8 @@ import com.weacsoft.jaravel.vendor.migration.Schema;
 /**
  * 给 {@code backend_pools} 加上游 API Key 字段。
  * <p>
- * <b>为什么需要</b>：中间件转发请求时，<b>不能</b>把客户端提交的 API Key 直接带给上游——
- * 那是中间件自己颁发的令牌，vLLM 不予识别（返回 401）。而真实 vLLM 往往各自要求
- * 自己的 Key（本机的两个端点都需要）。所以每个后端必须能独立配置「用它自己的 Key 去访问」。
- * <p>
- * <b>为什么放在后端表而不是全局配置</b>：多个后端可能是不同环境、不同 Key，
- * 甚至有的开放有的要鉴权。挂在后端上才能一对一。
+ * 客户端提交的是中间件颁发的 Key，vLLM 不予识别，转发时必须换成后端自己的 Key。
+ * 该字段按后端逐行配置：多个后端可能属于不同环境、使用不同 Key，或有的开放有的需鉴权。
  */
 @MigrationAnnotation
 public class Migration_2026_11_22_000001_AddUpstreamApiKeyToBackendPools implements Migration {

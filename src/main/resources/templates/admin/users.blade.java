@@ -31,10 +31,10 @@
             </div>
         </div>
         <p class="muted" style="margin:12px 0 0">
-            这里用于<b>预先授权</b>：某人还没登录过也可以先建成管理员，
-            他第一次用统一身份认证登录时会按学工号匹配到这条记录，权限立刻生效。<br>
-            反过来，若某人登录后只是普通用户（角色不在 <span class="mono">app.sso.admin-roles</span> 里），
-            也可以在这里把他提升为管理员。
+            这里用于预先授权：某人尚未登录过也可以先创建为管理员，
+            其首次通过统一身份认证登录时会按学工号匹配到这条记录，权限立即生效。<br>
+            若某人登录后是普通用户（角色不在 <span class="mono">app.sso.admin-roles</span> 中），
+            也可以在这里将其提升为管理员。
         </p>
     </form>
 </div>
@@ -110,14 +110,14 @@
                         </button>
                     </form>
                     <form method="post" action="/admin/users/delete" class="inline-form"
-                          onsubmit="return confirm('确认删除该账号？删除后他将无法进入管理后台。');">
+                          onsubmit="return confirm('确认删除该账号？删除后该账号无法进入管理后台。');">
                         <input type="hidden" name="id" value="{{ $u->getId() }}">
                         <button type="submit" class="btn btn-sm btn-danger">删除</button>
                     </form>
                 </div>
             </td>
         </tr>
-        {{-- 编辑行：可改姓名与角色。学工号作为身份标识不允许改（改了等于换人） --}}
+        {{-- 编辑行：可改姓名与角色。学工号作为身份标识不允许修改 --}}
         <tr id="edit-{{ $u->getId() }}" style="display:none;background:#f8fafc">
             <td colspan="6">
                 <form method="post" action="/admin/users/update">

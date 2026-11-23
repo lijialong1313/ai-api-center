@@ -1,8 +1,12 @@
 target/
 data/*.db
 data/*.db-journal
-*.log
-.idea/
-*.iml
 data/test-*.db
 data/test-*.db-journal
+*.log
+*.err
+.idea/
+*.iml
+
+# 本机真实凭证，绝不提交（模板见 application-local.yml.example）
+application-local.yml

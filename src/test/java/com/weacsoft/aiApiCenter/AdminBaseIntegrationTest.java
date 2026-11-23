@@ -32,9 +32,8 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 @SpringBootTest
 @org.springframework.test.context.ActiveProfiles("test")
 @AutoConfigureMockMvc
-// 显式开启认证：本类验证的是「认证闸门」本身的行为（未登录 302、非管理员 403）。
-// 不写死默认值，否则一旦有人把 app.admin.auth-enabled 的默认值改成 false，
-// 这些断言会集体失效却不说明原因。
+// 显式开启认证：本类验证认证闸门自身的行为（未登录 302、非管理员 403），
+// 不依赖配置默认值。
 @TestPropertySource(properties = "app.admin.auth-enabled=true")
 class AdminBaseIntegrationTest {
 
@@ -86,13 +85,13 @@ class AdminBaseIntegrationTest {
     }
 
     @Test
-    @DisplayName("登录页可渲染（未配置 SSO 时给出明确提示而非白屏）")
+    @DisplayName("登录页可渲染（未配置 SSO 时给出配置提示）")
     void loginPageRenders() throws Exception {
         String html = mockMvc.perform(get("/admin/login"))
                 .andExpect(status().isOk())
                 .andReturn().getResponse().getContentAsString();
         assertThat(html).contains("管理员登录");
-        // 未配置 client_id/secret 时必须提示配置缺失，不能静默失败
+        // 未配置 client_id/secret 时应提示配置缺失
         assertThat(html).contains("统一身份认证");
     }
 
@@ -163,10 +162,9 @@ class AdminBaseIntegrationTest {
     /**
      * 签发一个真实可用的 JWT。
      * <p>
-     * 关键：签发后必须 {@link AuthManager#clear()} 清掉本线程缓存的守卫实例，
-     * 否则 MockMvc 在同一线程内会复用「已登录」的守卫实例，未经 token 校验，
-     * 测试就变成了自欺欺人。清掉之后，请求里的守卫是全新的，必须真的解析并校验
-     * Authorization 头里的 token 才能通过——这才是端到端验证。
+     * 签发后调用 {@link AuthManager#clear()} 清掉本线程缓存的守卫实例：MockMvc 在同一
+     * 线程内会复用「已登录」的守卫实例，跳过 token 校验。清空后请求里的守卫是新实例，
+     * 必须实际解析并校验 Authorization 头中的 token 才能通过。
      */
     private String issueToken(AdminUser user) {
         authManager.clear();
@@ -199,7 +197,7 @@ class AdminBaseIntegrationTest {
         apiKeyService.setEnabled(created.key().getId(), false);
         assertThat(apiKeyService.resolveUsable(created.plaintext())).isNull();
 
-        // 库中不存明文
+        // 鉴权按哈希查询，库中同时保留明文列供后台复制
         ApiKey stored = apiKeyService.get(created.key().getId());
         assertThat(stored.getKeyHash()).isNotEqualTo(created.plaintext());
         assertThat(stored.getKeyPrefix()).isEqualTo(created.plaintext().substring(0, 11));
@@ -213,7 +211,7 @@ class AdminBaseIntegrationTest {
     void backendLifecycle() {
         BackendPool pool = backendPoolService.create("test-gpu", "测试后端",
                 "http://127.0.0.1:59999/", 0, null);
-        // 容量不能为 0（否则调度器永远不会放行）
+        // 容量下限为 1
         assertThat(pool.getCapacity()).isEqualTo(1);
         // 末尾斜杠被归一化
         assertThat(pool.getBaseUrl()).isEqualTo("http://127.0.0.1:59999");
