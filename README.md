@@ -178,10 +178,14 @@ X-Queue-Reason: <session_busy|backend_full|weight_round_wait|slot_race|queued>
 
 | 部署模式 | `jaravel.queue.driver` | 协调状态存放 | 必需模块 |
 |---|---|---|---|
-| 单机 · 无 Redis | `sync` | JVM 内存 | `starter` |
+| 单机 · 无 Redis | `sync`（默认）或 `database` | JVM 内存 / `jobs` 表 | `starter`（`database` 另需 `queue-database`） |
 | 单机 · 有 Redis | `redis` | Redis | `starter` + `redis` |
 | 多机 · 无 Redis | `database` | 共享数据库 `jobs` 表 | `starter` + `queue-database` |
 | 多机 · 有 Redis | `redis` | Redis | `starter` + `redis` |
+
+`sync` 为进程内存队列，重启即清空；`database` 把任务写入 `jobs` 表，重启后仍可消费，
+两种驱动均不依赖 Redis，在单机部署下可自由切换。`jobs` / `failed_jobs` 两张表由应用
+自带的迁移在启动时统一创建，无需手工执行 DDL。
 
 数据库由 `spring.datasource.*` 决定，默认 SQLite，切换 MySQL 时模型与迁移无需改动。
 

@@ -62,7 +62,7 @@
 
 | 部署模式 | 队列驱动 | 协调状态存放 | 必需模块 | 适用场景 |
 |---|---|---|---|---|
-| **单机 · 无 Redis** | `sync` | JVM 内存 | `starter` | 开发、单实例小规模 |
+| **单机 · 无 Redis** | `sync`（默认）或 `database` | JVM 内存 / `jobs` 表 | `starter`（database 另需 `queue-database`） | 开发、单实例小规模 |
 | **单机 · 有 Redis** | `redis` | Redis（可跨重启持久化） | `starter` + `redis` | 单实例，队列状态不丢失 |
 | **多机 · 无 Redis** | `database` | 共享数据库的 `jobs` 表 | `starter` + `queue-database` | 多实例，已有数据库，不引入 Redis |
 | **多机 · 有 Redis** | `redis` | Redis（原子操作、分布式锁） | `starter` + `redis` | 多实例，低延迟与强原子性 |
@@ -426,7 +426,8 @@ jaravel:
 ```yaml
 jaravel:
   queue:
-    driver: sync
+    driver: sync        # 默认：内存队列
+    # driver: database  # 可选：持久化到 jobs 表，跨重启保留
 ```
 
 **单机有 Redis：**
@@ -488,7 +489,16 @@ Redis 连接本身支持 standalone / sentinel / cluster，通过 `jaravel.redis
 
 ### 8.3 单机模式
 
-单机模式下无需跨实例协调，`sync` 驱动即内存队列管理器，缓存默认内存实现。
+单机模式下无需跨实例协调，两种队列驱动均可用：
+
+- **`sync`（默认）**：内存队列管理器，缓存默认内存实现。任务在进程内流转，
+  进程重启后队列清空。适合开发联调与对队列持久性无要求的场景。
+- **`database`**：基于 `jobs` 表的持久化队列（§8.2 的同一驱动），
+  任务写入数据库，进程重启后仍可继续消费。适合需要队列状态跨重启保留、
+  但不引入 Redis 的单机部署。
+
+两者对应用代码透明，只改 `jaravel.queue.driver` 即可切换；
+`jobs` / `failed_jobs` 表由应用自带的迁移在启动时统一创建（见 §10.2）。
 
 ### 8.4 当前实现的适用范围
 
@@ -549,6 +559,15 @@ Redis 连接本身支持 standalone / sentinel / cluster，通过 `jaravel.redis
 - **准入判定与公平配额**：`AdmissionScheduler`、`AdmissionState` 与 `WeightedFairnessGate` 由应用层实现，
   框架不提供加权公平语义。
 - **业务表与模型**：`admin_users`、`api_keys`、`backend_pools` 的迁移与模型由应用层定义。
+- **队列表迁移**：vendor 的 `queue-database` 模块把 `jobs` / `failed_jobs` 的建表迁移以
+  源码资源形式存放，`CLASSPATH` 扫描器不会执行它；应用自带一份同结构的迁移
+  （`Migration_2026_11_24_000001_CreateQueueTables`）在启动迁移阶段建表，
+  使 `database` 驱动在开发与打包两种运行形态下开箱可用。
+- **database 驱动装配消歧**：vendor 自动装配同时注册驱动与实现
+  `QueueDriver` 接口的门面（`QueueDriverHolder`），其自带的分发器与工作线程
+  按 `QueueDriver` 类型注入会产生二义性，database 模式无法启动；
+  应用侧以具体类型 `DatabaseQueueDriver` 重新声明这两个 Bean
+  （`DatabaseQueueWiring`）消除歧义，仅影响 database 模式。
 - **管理页面的 Blade 模板**：`jblade` 提供模板引擎，页面内容由应用层编写。
 - **健康检查逻辑**：调用 vLLM 的 `/health` 或 `/v1/models`，结果写入 `backend_pools.last_health_status`。
 - **统一身份认证对接**：认证系统的授权、换取令牌与用户信息接口由应用层封装。
@@ -557,7 +576,7 @@ Redis 连接本身支持 standalone / sentinel / cluster，通过 `jaravel.redis
 
 业务代码中需要感知部署模式的地方限于配置：
 
-- 单机无 Redis → `queue.driver=sync`，缓存使用内存实现；
+- 单机无 Redis → `queue.driver=sync`（内存，默认）或 `queue.driver=database`（持久化到 `jobs` 表）；
 - 单机有 Redis → `queue.driver=redis`，引入 `redis` 模块；
 - 多机无 Redis → `queue.driver=database`，依赖 `jobs` 表；
 - 多机有 Redis → `queue.driver=redis`，引入 `redis` 模块，使用 `RedisLockProviderImpl` 与 `redis-cache`。
@@ -577,6 +596,8 @@ Redis 连接本身支持 standalone / sentinel / cluster，通过 `jaravel.redis
 5. 准入判定层：会话串行、后端槽位、等级门槛、按权重分配份额、忙时 `503 + Retry-After`。
 6. OpenAI 兼容转发端点 `/v1/**`，支持 SSE 逐块透传与上游鉴权替换。
 7. 启动时确保配置的管理员工号存在（`app.admin.bootstrap-admin-staff-no`）。
+8. 队列驱动在 `sync` 与 `database` 之间可切换，且 `database` 模式在单机、无 Redis 条件下可用：
+   应用自带 `jobs` / `failed_jobs` 建表迁移，并以具体类型声明分发器与工作线程消除 vendor 装配歧义。
 
 后续工作：
 

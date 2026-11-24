@@ -37,7 +37,7 @@ jaravel:
     table: migrations
     auto-run: true
 
-  # ---------- 队列驱动：sync / database / redis（四选一，见文档 §3.1） ----------
+  # ---------- 队列驱动：sync（默认，内存）/ database（jobs 表）/ redis（三选一，见文档 §3.1） ----------
   queue:
     driver: ${QUEUE_DRIVER:sync}
     database:
