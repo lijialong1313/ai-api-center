@@ -39,6 +39,9 @@ public class AdmissionScheduler {
     /** Retry-After 上限（秒）：文档 §4.5 要求封顶 120 秒 */
     private static final int MAX_RETRY_AFTER_SECONDS = 120;
 
+    /** 终态拒绝原因（Key 停用或权重为 0）：调用方据此区分 403 与 429/503，不引导客户端重试 */
+    public static final String REASON_KEY_DISABLED = "该 API Key 已停用或权重为 0";
+
     private final AdmissionState state;
     private final SchedulerConfigCache configCache;
     private final BackendPoolService backendPoolService;
@@ -92,7 +95,7 @@ public class AdmissionScheduler {
      * 返回「等级不足」并让客户端重试，不放行到不该给它使用的后端。
      *
      * @param requestId 请求唯一 id
-     * @param sessionId 会话 id
+     * @param sessionId 会话 id（空值不再由此方法承载：无会话请求走 {@link #decideAnonymous}）
      * @param keyHash   Key 哈希
      * @param keyLevel  Key 等级（数值越大等级越高）
      * @return 决策结果
@@ -114,7 +117,7 @@ public class AdmissionScheduler {
             Map<String, Integer> weights = configCache.weights();
             Integer thisWeight = weights.get(keyHash);
             if (thisWeight == null || thisWeight <= 0) {
-                return Decision.reject(0, "该 API Key 已停用或权重为 0");
+                return Decision.reject(0, REASON_KEY_DISABLED);
             }
 
             // 1) 会话已占用 → 必须等（同会话严格串行，不与其他会话交错）
@@ -122,24 +125,10 @@ public class AdmissionScheduler {
                 return Decision.reject(retryAfterSeconds(), "同一会话已有在途请求");
             }
 
-            // 2) 后端槽位
-            List<BackendPool> candidates = backendPoolService.schedulable();
-            List<BackendPool> available = new ArrayList<>();
-            int levelBlocked = 0;
-            for (BackendPool backend : candidates) {
-                if (!state.hasFreeSlot(backend.getBackendId())) {
-                    continue;
-                }
-                // 等级门槛：该后端只服务达到 minLevel 的 Key。
-                // 单独计数，用于在「全被等级挡住」时返回准确原因。
-                if (!backend.allowsLevel(keyLevel)) {
-                    levelBlocked++;
-                    continue;
-                }
-                available.add(backend);
-            }
-            if (available.isEmpty()) {
-                if (levelBlocked > 0) {
+            // 2) 后端槽位（与匿名路径共用 pickBackendSlot）
+            SlotPick pick = pickBackendSlot(keyLevel);
+            if (pick.full()) {
+                if (pick.levelBlocked() > 0) {
                     return Decision.reject(retryAfterSeconds(),
                             "该 Key 等级不足以使用当前空闲后端");
                 }
@@ -156,11 +145,11 @@ public class AdmissionScheduler {
             }
 
             // 4) 选后端：优先选在途数最少的（天然负载均衡），容量均为 1 时等价于轮转
-            BackendPool chosen = available.get(0);
-            for (BackendPool backend : available) {
-                if (state.inflightOf(backend.getBackendId()) < state.inflightOf(chosen.getBackendId())) {
-                    chosen = backend;
-                }
+            BackendPool chosen = pick.leastInflight(state);
+            if (chosen == null) {
+                // 极端竞态：检查后、选择前全部槽位被占。回滚公平记账后重试。
+                fairness.rollback(keyHash);
+                return Decision.reject(retryAfterSeconds(), "槽位竞争失败，稍后重试");
             }
 
             // 5) 落闸：同时占会话与槽位
@@ -172,6 +161,100 @@ public class AdmissionScheduler {
             }
 
             return Decision.admit(chosen, requestId);
+        }
+    }
+
+    /**
+     * 匿名（无 {@code x-session-id}）请求的准入判定：不占会话，只做槽位判定的「快进快出」。
+     * <p>
+     * 与 {@link #decide} 共享「Key 停用」与「后端槽位」两个前置判定，
+     * 但<b>不做会话串行，也不做权重配额</b>——匿名请求没有会话身份可串行，
+     * 配额语义（「本轮轮到哪个 Key」）同样无从谈起。行为上与普通 OpenAI 网关一致：
+     * <ul>
+     *   <li>有空槽 → 立即放行（槽位在转发期间占用，结束时释放，容量仍受保护）；</li>
+     *   <li>槽位已满 / 等级不足 → 终态拒绝（调用方映射为 429，<b>不进排队、不返回 Retry-After</b>）；</li>
+     *   <li>Key 已停用或权重为 0 → 终态拒绝（调用方映射为 403）。</li>
+     * </ul>
+     *
+     * @param requestId 请求唯一 id（放行时用于 release）
+     * @param keyHash   Key 哈希
+     * @param keyLevel  Key 等级
+     * @return 决策结果；拒绝时 {@code retryAfter} 恒为 0
+     */
+    public Decision decideAnonymous(String requestId, String keyHash, int keyLevel) {
+        if (keyHash == null || keyHash.isBlank()) {
+            return Decision.reject(0, "缺少 API Key");
+        }
+
+        synchronized (decisionLock) {
+            syncCapacitiesIfNeeded();
+
+            Map<String, Integer> weights = configCache.weights();
+            Integer thisWeight = weights.get(keyHash);
+            if (thisWeight == null || thisWeight <= 0) {
+                return Decision.reject(0, REASON_KEY_DISABLED);
+            }
+
+            SlotPick pick = pickBackendSlot(keyLevel);
+            if (pick.full()) {
+                if (pick.levelBlocked() > 0) {
+                    return Decision.reject(0, "该 Key 等级不足以使用当前空闲后端");
+                }
+                return Decision.reject(0, "所有 GPU 后端已满");
+            }
+
+            BackendPool chosen = pick.leastInflight(state);
+            if (chosen == null) {
+                return Decision.reject(0, "槽位竞争失败");
+            }
+
+            // sessionId 传 null：只占后端槽位，不登记会话（tryAcquire 对 null 会话跳过会话锁）。
+            if (!state.tryAcquire(requestId, null, chosen.getBackendId())) {
+                return Decision.reject(0, "槽位竞争失败");
+            }
+            return Decision.admit(chosen, requestId);
+        }
+    }
+
+    /**
+     * 筛选「有空槽且等级允许」的后端集合（带锁内部使用）。
+     *
+     * @return 可用后端列表（可能为空）与「因等级门槛被挡」的数量
+     */
+    private SlotPick pickBackendSlot(int keyLevel) {
+        List<BackendPool> available = new ArrayList<>();
+        int levelBlocked = 0;
+        for (BackendPool backend : backendPoolService.schedulable()) {
+            if (!state.hasFreeSlot(backend.getBackendId())) {
+                continue;
+            }
+            if (!backend.allowsLevel(keyLevel)) {
+                levelBlocked++;
+                continue;
+            }
+            available.add(backend);
+        }
+        return new SlotPick(available, levelBlocked);
+    }
+
+    /** 槽位筛选结果：可用后端列表 + 被等级门槛挡住的计数（调用方已持 decisionLock） */
+    private record SlotPick(List<BackendPool> available, int levelBlocked) {
+        boolean full() {
+            return available.isEmpty();
+        }
+
+        /** 在途数最少的后端；列表为空返回 null（record 为静态，AdmissionState 由调用方传入） */
+        BackendPool leastInflight(AdmissionState state) {
+            if (available.isEmpty()) {
+                return null;
+            }
+            BackendPool chosen = available.get(0);
+            for (BackendPool backend : available) {
+                if (state.inflightOf(backend.getBackendId()) < state.inflightOf(chosen.getBackendId())) {
+                    chosen = backend;
+                }
+            }
+            return chosen;
         }
     }
 

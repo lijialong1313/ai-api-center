@@ -14,7 +14,7 @@
 | 能力 | 位置 |
 |---|---|
 | OpenAI 兼容端点 `/v1/**`（chat/completions、completions、embeddings、models） | `OpenAiGatewayController` |
-| 准入判定：会话串行、后端槽位、等级门槛、按权重分配份额 | `AdmissionScheduler` / `AdmissionState` / `WeightedFairnessGate` |
+| 准入判定：会话串行、后端槽位、等级门槛、按权重分配份额；无会话请求按普通网关放行（满则 429） | `AdmissionScheduler` / `AdmissionState` / `WeightedFairnessGate` |
 | 忙时响应 `503 + Retry-After` | `OpenAiGatewayController#busy` |
 | 统一身份认证登录（OAuth2 授权码模式） | `SsoService` / `LoginController` |
 | 账号开通与组织信息同步 | `UserProvisionService` |
@@ -117,10 +117,13 @@ Cookie 与 Bearer 的适配需要同时写入两个请求对象：框架的守�
 
 ## 4. 准入判定
 
-每次请求到达 `/v1/**` 时，服务端执行一次准入判定。判定不通过时返回 `503 + Retry-After`，
-客户端按该间隔重试，每次重试重新判定。服务端不维护常驻队列，也不维护排队位置。
+每次请求到达 `/v1/**` 时，服务端按是否携带 `x-session-id` 请求头走两条准入路径：
 
-判定顺序如下，任一不满足即拒绝：
+### 4.1 携带 `x-session-id`：会话串行 + 忙时排队
+
+面向 DSH 等会话型客户端。判定顺序如下，任一不满足即拒绝，
+判定不通过时返回 `503 + Retry-After`，客户端按该间隔重试，每次重试重新判定。
+服务端不维护常驻队列，也不维护排队位置。
 
 | 顺序 | 判定 | 拒绝结果 |
 |---|---|---|
@@ -137,7 +140,25 @@ Cookie 与 Bearer 的适配需要同时写入两个请求对象：框架的守�
 
 后端选择在等级允许且有空闲槽位的后端中选取在途请求数最少的一个。
 
-### 忙时响应
+### 4.2 不携带 `x-session-id`：按普通网关处理
+
+面向 curl / Python 等无会话概念的客户端（如拉取 `/v1/models`）。
+要求最宽松：**有空闲槽位立即放行**，请求期间占用该槽位、结束即释放，
+**不登记会话、不登记会话锁、不参与权重配额**；请求也不会向下游透传 `x-session-id`。
+
+拒绝时为**快速失败，不引导排队**：
+
+| 判定 | 拒绝结果 |
+|---|---|
+| Key 已停用或权重为 0 | 终态，返回 403 |
+| 无空闲且等级允许的后端 / 槽位竞争失败 | 返回 429，附带 `X-Queue-Reason`，**不附带 `Retry-After`** |
+
+即「机器没空就直接 429」，客户端自行决定退避节奏；这与普通 OpenAI 网关
+在过载时的行为一致，只是本服务额外给出了诊断用的 `X-Queue-Reason`。
+
+### 忙时 / 拒绝响应
+
+携带会话的请求忙时：
 
 ```http
 HTTP/1.1 503 Service Unavailable
@@ -145,7 +166,17 @@ Retry-After: <秒数>
 X-Queue-Reason: <session_busy|backend_full|weight_round_wait|slot_race|queued>
 ```
 
-`Retry-After` 的估算：常规情况按在途请求数给出保守切片（`2 + 在途数`），
+不携带会话的请求槽位已满：
+
+```http
+HTTP/1.1 429 Too Many Requests
+X-Queue-Reason: <backend_full|level_blocked>
+Content-Type: application/json;charset=utf-8
+
+{"error":{"message":"所有后端繁忙，请稍后重试","type":"rate_limited","code":"backend_full"}}
+```
+
+`Retry-After`（仅 503）的估算：常规情况按在途请求数给出保守切片（`2 + 在途数`），
 本轮未轮到该 Key 时按 `ceil(2 * 权重和 / 本 Key 权重)` 给出更短的间隔，两者均夹在 1 秒至 120 秒之间。
 
 `X-Queue-Reason` 只使用 ASCII 标识。HTTP 头只能承载 ISO-8859-1 字符，

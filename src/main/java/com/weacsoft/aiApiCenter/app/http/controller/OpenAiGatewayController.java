@@ -31,8 +31,9 @@ import java.util.UUID;
  * 准入流程（文档 §4.2）：
  * <ol>
  *   <li>鉴权：{@code Authorization: Bearer <key>}，按 SHA-256 查表；</li>
- *   <li>会话：读 {@code x-session-id}，缺失直接 400（§9.2 第 7 条）；</li>
- *   <li>准入：{@link AdmissionScheduler#decide}；拒绝时返回 503 + Retry-After（§4.5）；</li>
+ *   <li>会话：读 {@code x-session-id}。携带时走会话串行准入（同会话并发 503 + Retry-After）；
+ *       不携带时按普通 OpenAI 网关处理——立即放行，或槽位已满时 429 快速失败（§4.3）；</li>
+ *   <li>准入：{@link AdmissionScheduler#decide} / {@link AdmissionScheduler#decideAnonymous}；</li>
  *   <li>转发：请求体原样送给后端，响应逐块透传；</li>
  *   <li>释放：流式写出结束后释放槽位（§9.2 第 6 条）。</li>
  * </ol>
@@ -84,20 +85,23 @@ public class OpenAiGatewayController {
             return ResponseBuilder.error(401, "API Key 无效或已停用");
         }
 
-        // ---------- 2. 会话标识 ----------
+        // ---------- 2. 会话标识（两条准入路径） ----------
+        // 携带 x-session-id：会话串行 + 忙时 503 排队（DSH 等会话型客户端）。
+        // 不携带：按普通 OpenAI 网关处理——有空槽立即放行，槽位已满 429 快速失败（不进排队）。
         String sessionId = request.header("x-session-id");
-        if (sessionId == null || sessionId.isBlank()) {
-            return ResponseBuilder.error(400,
-                    "缺少 x-session-id 请求头（DSH 需安装 dsh-session-gateway 插件）");
+        if (sessionId != null && sessionId.isBlank()) {
+            sessionId = null;
         }
+        final boolean anonymous = sessionId == null;
 
         // ---------- 3. 准入 ----------
         String requestId = UUID.randomUUID().toString();
         // 带上 Key 等级：分级调度据此过滤后端
-        AdmissionScheduler.Decision decision =
-                scheduler.decide(requestId, sessionId, apiKey.getKeyHash(), apiKey.getLevel());
+        AdmissionScheduler.Decision decision = anonymous
+                ? scheduler.decideAnonymous(requestId, apiKey.getKeyHash(), apiKey.getLevel())
+                : scheduler.decide(requestId, sessionId, apiKey.getKeyHash(), apiKey.getLevel());
         if (!decision.admitted()) {
-            return busy(decision);
+            return anonymous ? rejected(decision) : busy(decision);
         }
 
         BackendPool backend = decision.backend();
@@ -121,11 +125,14 @@ public class OpenAiGatewayController {
                     .timeout(FORWARD_TIMEOUT)
                     .header("Content-Type", contentTypeOf(request))
                     .header("Accept", acceptOf(request))
-                    // 会话头透传给上游：便于后端日志串联
-                    .header("x-session-id", sessionId)
                     .method(methodOf(request),
                             body.length == 0 ? HttpRequest.BodyPublishers.noBody()
                                     : HttpRequest.BodyPublishers.ofByteArray(body));
+
+            // 会话头透传给上游：便于后端日志串联（仅请求确实携带时）
+            if (sessionId != null) {
+                requestBuilder.header("x-session-id", sessionId);
+            }
 
             // 上游鉴权：使用该后端自己的 Key。客户端提交的是中间件颁发的 sk-ac-*，
             // vLLM 不予识别，直接转发客户端的 Authorization 会得到 401。
@@ -259,7 +266,30 @@ public class OpenAiGatewayController {
     }
 
     /**
-     * 忙时响应：{@code 503 + Retry-After}（文档 §4.5）。
+     * 匿名（无 {@code x-session-id}）请求的拒绝响应：快速失败，不引导排队。
+     * <ul>
+     *   <li>Key 已停用或权重为 0 → 403（终态）；</li>
+     *   <li>其余（后端槽位已满、等级不足、槽位竞争）→ 429，
+     *       附 {@code X-Queue-Reason} 便于诊断，但不带 {@code Retry-After}——
+     *       与普通网关的忙时语义一致，客户端可自行决定退避节奏。</li>
+     * </ul>
+     */
+    private Response rejected(AdmissionScheduler.Decision decision) {
+        if (AdmissionScheduler.REASON_KEY_DISABLED.equals(decision.reason())) {
+            return ResponseBuilder.error(403, decision.reason());
+        }
+        String code = decision.reason().contains("等级") ? "level_blocked" : "backend_full";
+        ResponseBuilder.RawResponse raw = ResponseBuilder.raw()
+                .status(429)
+                .contentType("application/json;charset=utf-8")
+                .header("X-Queue-Reason", code);
+        raw.body("{\"error\":{\"message\":\"所有后端繁忙，请稍后重试\",\"type\":\"rate_limited\","
+                + "\"code\":\"backend_full\"}}");
+        return raw;
+    }
+
+    /**
+     * 忙时响应：{@code 503 + Retry-After}（文档 §4.5），仅用于携带 {@code x-session-id} 的请求。
      */
     private Response busy(AdmissionScheduler.Decision decision) {
         var retryAfter = decision.retryAfterSeconds();

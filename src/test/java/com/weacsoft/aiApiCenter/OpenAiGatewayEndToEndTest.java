@@ -268,12 +268,49 @@ class OpenAiGatewayEndToEndTest {
     }
 
     @Test
-    @DisplayName("缺少 x-session-id 返回 400（文档 §9.2 第 7 条）")
-    void missingSessionIdReturns400() throws Exception {
-        var key = newKey("e2e-无会话");
+    @DisplayName("不带 x-session-id：有空槽时按普通网关转发（不再 400），且不把该头传给上游")
+    void anonymousNoSessionIdForwardsWhenSlotFree() throws Exception {
+        var key = newKey("e2e-匿名");
+        String payload = "{\"model\":\"qwen\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}";
+
+        HttpResponse<String> response = post("/v1/chat/completions", key.plaintext(), null, payload);
+
+        assertThat(response.statusCode()).as("匿名请求有空槽应直接放行").isEqualTo(200);
+        assertThat(response.body()).contains("chatcmpl-test");
+        assertThat(lastUpstreamSessionHeader.get())
+                .as("请求未携带 x-session-id，上游不应收到该头").isNull();
+    }
+
+    @Test
+    @DisplayName("不带 x-session-id：槽位已满时返回 429（不进排队、无 Retry-After）")
+    void anonymousNoSessionIdGets429WhenFull() throws Exception {
+        upstreamIsSlow(1500);
+        var key = newKey("e2e-匿名满");
+
+        // 后端容量 2：用两个不同会话的慢请求占满全部槽位
+        Thread h1 = new Thread(() -> {
+            try { post("/v1/chat/completions", key.plaintext(), "fill-a", "{}"); }
+            catch (Exception ignored) { }
+        });
+        Thread h2 = new Thread(() -> {
+            try { post("/v1/chat/completions", key.plaintext(), "fill-b", "{}"); }
+            catch (Exception ignored) { }
+        });
+        h1.start();
+        h2.start();
+        Thread.sleep(600);   // 等待两者都进入转发并占用槽位
+
         HttpResponse<String> response = post("/v1/chat/completions", key.plaintext(), null, "{}");
-        assertThat(response.statusCode()).isEqualTo(400);
-        assertThat(response.body()).contains("x-session-id");
+
+        assertThat(response.statusCode()).as("槽位满的匿名请求应快速失败 429").isEqualTo(429);
+        assertThat(response.headers().firstValue("Retry-After"))
+                .as("429 不引导排队重试").isNotPresent();
+        assertThat(response.headers().firstValue("X-Queue-Reason"))
+                .as("附带诊断原因").contains("backend_full");
+        assertThat(response.body()).contains("rate_limited");
+
+        h1.join(6000);
+        h2.join(6000);
     }
 
     // ==================== 忙时 503 + Retry-After ====================

@@ -251,13 +251,103 @@ class AdmissionConcurrencyTest {
     }
 
     @Test
-    @DisplayName("缺少 x-session-id 应拒绝（文档 §9.2 第 7 条）")
-    void missingSessionIdIsRejected() {
+    @DisplayName("会话路径：空 sessionId 由 decide 拒绝（网关层已改走 decideAnonymous）")
+    void emptySessionIdStillRejectedBySessionPath() {
         ApiKeyService.CreatedKey key = newKey("无会话测试", 5);
         newBackend("conc-nosess-gpu", 2);
 
         assertThat(scheduler.decide("r-nosess", null, key.key().getKeyHash()).admitted()).isFalse();
         assertThat(scheduler.decide("r-nosess2", "  ", key.key().getKeyHash()).admitted()).isFalse();
+    }
+
+    // ==================== 匿名（无 x-session-id）路径 ====================
+
+    @Test
+    @DisplayName("匿名请求：有空槽时立即放行，且只占槽位不占会话")
+    void anonymousAdmitsWhenSlotFree() {
+        ApiKeyService.CreatedKey key = newKey("匿名放行", 5);
+        String backendId = newBackend("conc-anon-gpu", 1);
+
+        AdmissionScheduler.Decision d =
+                scheduler.decideAnonymous("r-anon-1", key.key().getKeyHash(), 0);
+        assertThat(d.admitted()).as("有空槽的匿名请求应立即放行").isTrue();
+        assertThat(state.isSessionBusy("any-session")).as("匿名请求不登记会话").isFalse();
+        assertThat(state.inflightOf(backendId)).as("匿名请求占一个后端槽位").isEqualTo(1);
+
+        scheduler.release("r-anon-1");
+        assertThat(state.inflightOf(backendId)).isZero();
+    }
+
+    @Test
+    @DisplayName("匿名请求：槽位满时拒绝且 Retry-After 恒为 0（不进排队，网关映射 429）")
+    void anonymousRejectsWithoutRetryAfterWhenFull() {
+        ApiKeyService.CreatedKey key = newKey("匿名满槽", 5);
+        String backendId = newBackend("conc-anon-full", 1);
+
+        // 先用一个会话型请求占满唯一槽位
+        AdmissionScheduler.Decision holder = scheduler.decide("r-holder", "sess-holder", key.key().getKeyHash());
+        assertThat(holder.admitted()).isTrue();
+
+        AdmissionScheduler.Decision d =
+                scheduler.decideAnonymous("r-anon-2", key.key().getKeyHash(), 0);
+        assertThat(d.admitted()).as("槽位满时匿名请求应被拒").isFalse();
+        assertThat(d.retryAfterSeconds()).as("匿名拒绝不引导重试（网关映射 429）").isEmpty();
+
+        scheduler.release("r-holder");
+    }
+
+    @Test
+    @DisplayName("匿名请求：Key 停用时拒绝且 Retry-After 为 0（网关映射 403）")
+    void anonymousDisabledKeyIsTerminal() {
+        ApiKeyService.CreatedKey key = newKey("匿名停用", 5);
+        newBackend("conc-anon-disabled", 2);
+
+        apiKeyService.setEnabled(key.key().getId(), false);
+
+        AdmissionScheduler.Decision d =
+                scheduler.decideAnonymous("r-anon-3", key.key().getKeyHash(), 0);
+        assertThat(d.admitted()).isFalse();
+        assertThat(d.retryAfterSeconds()).isEmpty();
+        assertThat(d.reason()).isEqualTo(AdmissionScheduler.REASON_KEY_DISABLED);
+    }
+
+    @Test
+    @DisplayName("匿名请求：多个匿名可并行占满各槽位，峰值在途数不超过 capacity")
+    void anonymousBurstRespectsCapacity() throws Exception {
+        ApiKeyService.CreatedKey key = newKey("匿名并发", 5);
+        String backendId = newBackend("conc-anon-burst", 3);   // 容量 3
+
+        int threads = 12;
+        AtomicInteger admitted = new AtomicInteger();
+        AtomicInteger rejected = new AtomicInteger();
+        CountDownLatch done = new CountDownLatch(threads);
+
+        ExecutorService pool = Executors.newFixedThreadPool(threads);
+        for (int i = 0; i < threads; i++) {
+            final int idx = i;
+            pool.submit(() -> {
+                try {
+                    AdmissionScheduler.Decision d = scheduler.decideAnonymous(
+                            "r-burst-" + idx, key.key().getKeyHash(), 0);
+                    if (d.admitted()) {
+                        admitted.incrementAndGet();
+                    } else {
+                        rejected.incrementAndGet();
+                    }
+                } catch (Exception ignored) {
+                    rejected.incrementAndGet();
+                } finally {
+                    done.countDown();
+                }
+            });
+        }
+        assertThat(done.await(30, TimeUnit.SECONDS)).isTrue();
+        pool.shutdownNow();
+
+        assertThat(state.inflightOf(backendId)).as("在途数不得超过 capacity=3").isLessThanOrEqualTo(3);
+        assertThat(admitted.get()).as("应有请求被放行").isGreaterThan(0);
+        assertThat(rejected.get()).as("槽位用尽后应开始拒绝").isGreaterThan(0);
+        assertThat(admitted.get() + rejected.get()).isEqualTo(threads);
     }
 
     @Test
