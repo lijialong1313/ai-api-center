@@ -34,15 +34,7 @@
 
 - JDK 17 或更高版本；
 - Maven 3.9；
-- 依赖 `jaravel-vendor` 0.1.3（坐标 `io.github.lijialong1313`，仓库 `https://jitpack.io`）。
-
-若本地仓库中尚未安装该依赖，先从其源码构建安装：
-
-```powershell
-git clone https://github.com/weacsoft/jaravel-vendor
-cd jaravel-vendor
-mvn clean install -DskipTests
-```
+- 依赖 `jaravel-vendor` 0.1.3（坐标 `io.github.lijialong1313`），由 Maven 中央仓库自动解析，无需额外仓库配置与本地构建。
 
 ### 2.2 构建与运行
 
