@@ -347,6 +347,33 @@ class OpenAiGatewayEndToEndTest {
     }
 
     @Test
+    @DisplayName("Key 会话并发上限 2：同会话第二个请求不再 503，直接放行")
+    void concurrentSameSessionPassesWhenConcurrencyIsTwo() throws Exception {
+        upstreamIsSlow(1500);
+        var created = newKey("e2e-并发2");
+        // 后台把该 Key 的会话并发上限从 1 调到 2（DSH 首请求场景：主请求 + 自动起标题）
+        apiKeyService.update(created.key().getId(), null, null, null, null, 2);
+
+        Thread holder = new Thread(() -> {
+            try {
+                post("/v1/chat/completions", created.plaintext(), "e2e-cc2-sess", "{}");
+            } catch (Exception ignored) {
+            }
+        });
+        holder.start();
+        Thread.sleep(400);   // 等待其进入转发阶段，占用该会话的一个名额
+
+        HttpResponse<String> second =
+                post("/v1/chat/completions", created.plaintext(), "e2e-cc2-sess", "{}");
+
+        assertThat(second.statusCode())
+                .as("会话在途 1 < 上限 2，第二个请求应放行 200")
+                .isEqualTo(200);
+
+        holder.join(8000);
+    }
+
+    @Test
     @DisplayName("不同会话可并行进入（会话锁只锁同一会话）")
     void differentSessionsCanRunConcurrently() throws Exception {
         upstreamIsSlow(600);

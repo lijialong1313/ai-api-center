@@ -30,13 +30,19 @@
                 <label>等级</label>
                 <input type="number" name="level" value="0" min="0" max="99">
             </div>
+            <div class="field" style="width:110px">
+                <label>会话并发</label>
+                <input type="number" name="concurrency" value="1" min="1" max="32">
+            </div>
             <div class="field">
                 <button type="submit" class="btn btn-primary">生成 Key</button>
             </div>
         </div>
         <p class="muted" style="margin:12px 0 0">
             权重用于按额度分配服务机会：权重 5 的 Key 约获得 5 倍服务比例，权重 1 的 Key 亦有保底份额。<br>
-            等级用于分级调度：某些 GPU 可设「最低等级」，只有达到该等级的 Key 才会被调度到它上面。0 为默认等级。
+            等级用于分级调度：某些 GPU 可设「最低等级」，只有达到该等级的 Key 才会被调度到它上面。0 为默认等级。<br>
+            会话并发为同一会话（客户端 {@code x-session-id}）允许的最大并行请求数：1 为严格串行；
+            DSH 客户端会在同一会话内并行发起主请求与自动起标题，建议设为 2 或 3，避免首请求被 503 拒绝。
         </p>
     </form>
 </div>
@@ -51,6 +57,7 @@
             <th>Key</th>
             <th>权重</th>
             <th>等级</th>
+            <th>会话并发</th>
             <th>状态</th>
             <th>最近使用</th>
             <th>操作</th>
@@ -108,6 +115,16 @@
                 </form>
             </td>
             <td>
+                <form method="post" action="/admin/api-keys/update" class="inline-form">
+                    <input type="hidden" name="id" value="{{ $key->getId() }}">
+                    <div class="actions">
+                        <input type="number" name="concurrency" value="{{ $key->getConcurrency() }}"
+                               min="1" max="32" style="width:70px">
+                        <button type="submit" class="btn btn-sm">保存</button>
+                    </div>
+                </form>
+            </td>
+            <td>
                 @if($key->isUsable())
                 <span class="badge badge-ok">启用</span>
                 @else
@@ -137,7 +154,7 @@
             </td>
         </tr>
         @empty
-        <tr><td colspan="8" class="muted">还没有任何 Key，请先在上方新建。</td></tr>
+        <tr><td colspan="9" class="muted">还没有任何 Key，请先在上方新建。</td></tr>
         @endforelse
         </tbody>
     </table>

@@ -58,6 +58,19 @@ public class ApiKeyService {
      * @return 新建结果
      */
     public CreatedKey create(String label, int weight, int level) {
+        return create(label, weight, level, 1);
+    }
+
+    /**
+     * 新建 Key（带等级与会话并发上限）。
+     *
+     * @param label       名称
+     * @param weight      权重
+     * @param level       等级，数值越大等级越高；用于分级调度
+     * @param concurrency 会话并发上限（&lt;1 会被纠正为 1，即严格串行）
+     * @return 新建结果
+     */
+    public CreatedKey create(String label, int weight, int level, int concurrency) {
         String plaintext = generatePlaintext();
         ApiKey key = new ApiKey();
         key.setKeyHash(sha256(plaintext));
@@ -67,12 +80,13 @@ public class ApiKeyService {
         key.setLabel(label);
         key.setWeight(weight <= 0 ? 1 : weight);
         key.setLevel(Math.max(0, level));
+        key.setConcurrency(Math.max(1, concurrency));
         key.setEnabled(true);
         key.setCreatedAt(TimestampFill.nowString());
         key.setUpdatedAt(TimestampFill.nowString());
         ApiKey saved = key.save();
-        log.info("[api-key] 新建 Key: id={}, label={}, weight={}",
-                saved != null ? saved.getId() : null, label, key.getWeight());
+        log.info("[api-key] 新建 Key: id={}, label={}, weight={}, concurrency={}",
+                saved != null ? saved.getId() : null, label, key.getWeight(), key.getConcurrency());
         return new CreatedKey(saved, plaintext);
     }
 
@@ -108,6 +122,17 @@ public class ApiKeyService {
      * @return 更新后的实体
      */
     public ApiKey update(Long id, String label, Integer weight, Boolean enabled, Integer level) {
+        return update(id, label, weight, enabled, level, null);
+    }
+
+    /**
+     * 修改名称 / 权重 / 启用状态 / 等级 / 会话并发上限。
+     *
+     * @param concurrency 会话并发上限，null=不改；&lt;1 会被纠正为 1
+     * @return 更新后的实体
+     */
+    public ApiKey update(Long id, String label, Integer weight, Boolean enabled,
+                         Integer level, Integer concurrency) {
         ApiKey key = ApiKey.findById(id);
         if (key == null) {
             return null;
@@ -125,12 +150,15 @@ public class ApiKeyService {
         if (level != null) {
             key.setLevel(Math.max(0, level));
         }
+        if (concurrency != null) {
+            key.setConcurrency(Math.max(1, concurrency));
+        }
         key.setUpdatedAt(TimestampFill.nowString());
         ApiKey saved = key.save();
-        // 权重 / 启用状态变了，调度器缓存的配置必须立刻失效
+        // 权重 / 启用状态 / 并发上限变了，调度器缓存的配置必须立刻失效
         configCache.invalidateWeights();
-        log.info("[api-key] 更新 Key: id={}, label={}, weight={}, enabled={}",
-                id, key.getLabel(), key.getWeight(), key.getEnabled());
+        log.info("[api-key] 更新 Key: id={}, label={}, weight={}, enabled={}, concurrency={}",
+                id, key.getLabel(), key.getWeight(), key.getEnabled(), key.getConcurrency());
         return saved;
     }
 

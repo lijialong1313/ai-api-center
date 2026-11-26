@@ -21,7 +21,9 @@
 ### 1.3 核心调度语义
 
 - 全局排队，避免请求直接超出 vLLM 的承载能力。
-- 同一 `session_id` 的多轮 Agent 请求严格串行，不与其他会话交错。
+- 同一 `session_id` 的在途请求数受该 Key 的会话并发上限约束，默认 1（严格串行，不与其他会话交错）；
+  DSH 等客户端在同一会话内会并发发起多个请求（主请求与后台自动起标题等），
+  上限调高后这些请求可以并行，不再互相排队。
 - 按 API Key 加权公平：高权重获得更高服务比例，低权重同样有保底份额。
 - 忙时返回 `503 + Retry-After`，支持客户端短轮询重试。
 - 流式响应期间占用槽位，转发结束后释放。
@@ -117,7 +119,7 @@ vLLM 后端（容量通常为 1）
 | 准入判定 | 判断本次请求现在能否进入后端，进入哪一个 | `AdmissionScheduler` |
 | 会话与槽位状态 | 维护在途会话、各后端 in-flight 计数与容量 | `AdmissionState` |
 | 按权重分配份额 | 决定本轮是否轮到该 Key | `WeightedFairnessGate` |
-| 权重配置缓存 | 缓存可用 Key 的权重，后台改动后立即失效 | `SchedulerConfigCache` |
+| 权重与并发上限配置缓存 | 缓存可用 Key 的权重与会话并发上限，后台改动后立即失效 | `SchedulerConfigCache` |
 | 临界区互斥 | 保证「检查 → 放行」不被并发交错 | `AdmissionScheduler` 内的 `decisionLock` |
 | 释放 | 转发结束后清除会话与槽位占用 | `AdmissionScheduler#release` |
 
@@ -143,12 +145,17 @@ vLLM 后端（容量通常为 1）
 | 顺序 | 判定 | 拒绝结果 |
 |---|---|---|
 | 0 | Key 已停用或权重为 0 | 终态，`retryAfter = 0`，返回 403 |
-| 1 | 同一会话已有在途请求 | 可重试，`Retry-After` 按在途数估算 |
+| 1 | 该会话在途数已达该 Key 的会话并发上限（默认 1） | 可重试，`Retry-After` 按在途数估算 |
 | 2 | 无空闲且等级允许的后端 | 可重试；等级不足时给出准确原因 |
 | 3 | 本轮未轮到该 Key（公平配额） | 可重试，给出更短的重试间隔 |
-| 4 | 占会话与槽位 | 竞争失败则归还公平额度并重试 |
+| 4 | 占会话名额与槽位 | 竞争失败则归还公平额度并重试 |
 
 第 0 项必须排在可重试判断之前：已停用的 Key 若返回 503，客户端会按提示持续重试且始终无法成功。
+
+第 1 项的会话并发上限按 Key 配置，存储在 `api_keys.concurrency`（默认 1，最小 1），
+由 `SchedulerConfigCache` 与权重一并缓存并随后台改动即时失效。上限为 1 时即严格串行；
+DSH 等客户端在同一会话内会并发发起多个请求（主请求与后台自动起标题等），
+把它们指向同一 Key 时，上限调高到 2 或 3 即可让这些请求并行进入。
 
 第 4 项竞争失败时调用 `WeightedFairnessGate#rollback` 归还已记账的服务额度，
 否则该 Key 消耗了额度却没有获得服务，长期服务比例会低于其权重。
@@ -295,6 +302,7 @@ POST /admin/api-keys/delete
 | `label` | varchar | 可读名称 |
 | `weight` | int | 相对权重，默认 1 |
 | `level` | int | Key 等级，数值越大等级越高 |
+| `concurrency` | int | 会话并发上限，默认 1（严格串行），最小 1 |
 | `enabled` | boolean | 是否启用 |
 | `last_used_at` | timestamp | 最近使用时间 |
 | `created_at` | timestamp | 创建时间 |
@@ -302,10 +310,10 @@ POST /admin/api-keys/delete
 
 **页面功能（jblade 渲染）：**
 
-- 列表展示全部 Key 及其名称、权重、等级与启用状态，明文默认打码；
+- 列表展示全部 Key 及其名称、权重、等级、会话并发上限与启用状态，明文默认打码；
 - 新增 Key（生成 `sk-ac-` 前缀的随机值，页面提供复制）；
-- 重新生成 Key 明文：保留名称、权重、等级与启用状态，旧值立即失效；
-- 修改权重、等级与启用状态；
+- 重新生成 Key 明文：保留名称、权重、等级、会话并发上限与启用状态，旧值立即失效；
+- 修改权重、等级、会话并发上限与启用状态；
 - 删除 Key。
 
 鉴权按 `key_hash` 查询，同时保留 `key_value` 明文列，使管理员可以随时查看与复制 Key。
@@ -405,12 +413,20 @@ POST /admin/users/delete
 | 表名 | 用途 | 是否必需 |
 |---|---|---|
 | `admin_users` | 管理员账号与授权记录 | 是 |
-| `api_keys` | Key、权重、等级、启用状态 | 是 |
+| `api_keys` | Key、权重、等级、会话并发上限、启用状态 | 是 |
 | `backend_pools` | 后端地址、容量、等级门槛、启用状态 | 是 |
 | `migrations` | 迁移执行记录 | 是 |
 
-迁移文件位于 `src/main/java/com/weacsoft/aiApiCenter/database/migration/`，共 6 个：
-三个建表迁移与三个后续字段追加迁移。
+迁移文件位于 `src/main/java/com/weacsoft/aiApiCenter/database/migration/`，共 8 个：
+四个建表迁移（三张业务表 + `jobs` / `failed_jobs`）与四个后续字段追加迁移
+（后端上游 Key、Key 明文、等级、会话并发上限）。
+
+**测试环境的迁移源**：测试 profile（`src/test/resources/application-test.yml`）把
+`jaravel.migration.source` 覆写为 `DIRECTORY_CLASSES`（扫描 `target/classes`），
+因为 surefire fork 出的 JVM 里 `java.class.path` 只含 surefire booter 本身
+（真实类路径在其 manifest 的 Class-Path），`CLASSPATH` 源在该形态下扫不到迁移类。
+生产运行（`java -jar` fat jar）不受影响：`java.class.path` 指向 fat jar 本身，
+`CLASSPATH` 源剥掉 `BOOT-INF/classes/` 前缀后照常扫描到。
 
 三张业务表均启用软删除，模型层的查询自动附加 `deleted_at IS NULL` 条件。
 
@@ -508,7 +524,7 @@ Redis 连接本身支持 standalone / sentinel / cluster，通过 `jaravel.redis
 ### 8.1 有 Redis 模式
 
 - 队列：每个 Key 一个 `RBlockingQueue`，`QueueDriver.pop` 原子取出。
-- 会话 in-flight：`redis-cache` 的 `putIfAbsent` 保证原子标记。
+- 会话 in-flight 计数：`redis-cache` 的原子自增（上限由该 Key 的并发上限判定）保证多实例一致。
 - 槽位：`RSemaphore(backendId, capacity)` 原子获取与释放。
 - 临界区：`RedisLockProviderImpl` 提供分布式锁，保护「检查 → 放行」临界区。
 - 配置同步：管理界面修改 `api_keys` / `backend_pools` 后，通过 `RTopic` 发布变更事件，各实例刷新本地缓存。
@@ -516,7 +532,7 @@ Redis 连接本身支持 standalone / sentinel / cluster，通过 `jaravel.redis
 ### 8.2 无 Redis 多机模式（database）
 
 - 队列：`queue-database` 的 `DatabaseQueueDriver`，`pop` 通过数据库行锁保证多实例竞争安全。
-- 会话 in-flight：用 `inflight_sessions` 表，通过 `INSERT ... ON CONFLICT DO NOTHING` 或 `SELECT ... FOR UPDATE` 保证原子性。
+- 会话 in-flight 计数：用 `inflight_sessions` 表的计数列，通过 `SELECT ... FOR UPDATE` 原子自增（超过该 Key 并发上限则拒绝）保证原子性。
 - 槽位：用 `backend_pools` 表的可用计数字段配合 `SELECT ... FOR UPDATE`，或使用数据库驱动的原子计数器。
 - 配置同步：管理界面直接写库，各实例通过短 TTL 本地缓存获取最新配置。
 
@@ -548,7 +564,7 @@ Redis 连接本身支持 standalone / sentinel / cluster，通过 `jaravel.redis
 
 ### 9.1 必须保持的不变量
 
-1. **同一 `sessionId` 在任意时刻最多只有一个请求处于「转发到 vLLM」状态。**
+1. **同一 `sessionId` 在任意时刻的在途请求数不超过该 Key 配置的会话并发上限（默认 1，即严格串行）。**
 2. **每个后端在任意时刻的 in-flight 请求数不超过其容量。**
 3. **高权重 Key 获得更高服务比例，低权重 Key 有保底执行机会。**
 4. **流式响应期间槽位被占用，转发结束后才释放。**
@@ -563,15 +579,18 @@ Redis 连接本身支持 standalone / sentinel / cluster，通过 `jaravel.redis
 3. **准入判定必须串行化或通过原子操作保护。** 当前实现使用进程内互斥锁。
 4. **终态拒绝必须排在可重试判断之前。** 已停用的 Key 若返回 503，客户端会持续重试且始终无法成功。
 5. **槽位释放在转发结束后执行。** 不能在收到响应头时释放。
-6. **`x-session-id` 是可选的，不再强制。** 携带则走会话串行 + 忙时 503 排队路径；
+6. **`x-session-id` 是可选的，不再强制。** 携带则走会话并发控制（上限按 Key 配置，默认 1 即严格串行）+ 忙时 503 排队路径；
    不携带则按普通 OpenAI 网关处理——有空槽立即放行，槽位已满返回 429 快速失败（不进排队、无 Retry-After）。
    两条路径共用的槽位容量保护不变。
-7. **Redis 驱动严格按需装配。** 未引入 `redis` 模块时不会静默降级到 database，部署意图必须显式。
-8. **管理 API 与 DSH 流量分离。** 管理后台位于 `/admin/**`，模型调用位于 `/v1/**`。
-9. **JWT 黑名单启用。** 管理员登出后令牌立即失效。
-10. **转发使用 HTTP/1.1。** JDK 客户端默认对明文 http 尝试 h2c 升级，
+7. **会话并发上限是准入层的软限，不是后端的硬限。** 把某 Key 的上限调得高于所有后端容量之和时，
+   该 Key 的请求会在第 2 项（槽位）判定处被排队，而不是在会话上限处被拒；上限的意义是
+   「同一会话最多几个请求同时被受理」，与后端容量是两层独立的保护。
+8. **Redis 驱动严格按需装配。** 未引入 `redis` 模块时不会静默降级到 database，部署意图必须显式。
+9. **管理 API 与 DSH 流量分离。** 管理后台位于 `/admin/**`，模型调用位于 `/v1/**`。
+10. **JWT 黑名单启用。** 管理员登出后令牌立即失效。
+11. **转发使用 HTTP/1.1。** JDK 客户端默认对明文 http 尝试 h2c 升级，
     vLLM 前置的 uvicorn/starlette 对该升级支持不完整，表现为上游读不到请求体并返回 400。
-11. **SSE 的结束判定以协议终结标记为准。** HTTP/1.1 keep-alive 下上游发送
+12. **SSE 的结束判定以协议终结标记为准。** HTTP/1.1 keep-alive 下上游发送
     `data: [DONE]` 后连接可能被复用而不返回 EOF，仅依赖 EOF 会使转发线程阻塞至超时，
     期间会话与槽位持续占用。
 
@@ -630,7 +649,7 @@ Redis 连接本身支持 standalone / sentinel / cluster，通过 `jaravel.redis
 2. 三张业务表的迁移与模型（`admin_users`、`api_keys`、`backend_pools`）。
 3. 统一身份认证登录、账号开通与同步、Cookie 与 Bearer 双通道的认证与授权中间件。
 4. 三个管理页面（概览、API Key、GPU 后端）与管理员账号管理页面。
-5. 准入判定层：会话串行、后端槽位、等级门槛、按权重分配份额、忙时 `503 + Retry-After`。
+5. 准入判定层：会话并发控制（按 Key 配置上限，默认 1 即串行）、后端槽位、等级门槛、按权重分配份额、忙时 `503 + Retry-After`。
 6. OpenAI 兼容转发端点 `/v1/**`，支持 SSE 逐块透传与上游鉴权替换。
 7. 启动时确保配置的管理员工号存在（`app.admin.bootstrap-admin-staff-no`）。
 8. 队列驱动在 `sync` 与 `database` 之间可切换，且 `database` 模式在单机、无 Redis 条件下可用：

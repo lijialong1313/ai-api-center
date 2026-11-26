@@ -99,12 +99,13 @@ public class AdminController {
         String label = request.input("label");
         Integer weight = parseInt(request.input("weight"), 1);
         Integer level = parseInt(request.input("level"), 0);
-        ApiKeyService.CreatedKey created = apiKeyService.create(label, weight, level);
+        Integer concurrency = parseInt(request.input("concurrency"), 1);
+        ApiKeyService.CreatedKey created = apiKeyService.create(label, weight, level, concurrency);
         return ResponseBuilder.redirect("/admin/api-keys?newKey="
                 + urlEncode(created.plaintext()));
     }
 
-    /** 修改权重 / 名称 / 启用状态（表单提交后回列表页）。 */
+    /** 修改权重 / 名称 / 启用状态 / 会话并发上限（表单提交后回列表页）。 */
     public Response updateApiKey(Request request) {
         Long id = parseLong(request.input("id"));
         if (id == null) {
@@ -114,7 +115,9 @@ public class AdminController {
         String label = request.input("label");
         Boolean enabled = parseBool(request.input("enabled"));
         Integer level = request.input("level") == null ? null : parseInt(request.input("level"), 0);
-        apiKeyService.update(id, label, weight, enabled, level);
+        Integer concurrency = request.input("concurrency") == null
+                ? null : parseInt(request.input("concurrency"), 1);
+        apiKeyService.update(id, label, weight, enabled, level, concurrency);
         return ResponseBuilder.redirect("/admin/api-keys");
     }
 

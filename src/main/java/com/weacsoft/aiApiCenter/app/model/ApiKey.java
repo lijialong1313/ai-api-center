@@ -63,6 +63,14 @@ public class ApiKey extends BaseModel<ApiKey, Long> {
     @Column(name = "level")
     private Integer level;
 
+    /**
+     * 会话并发上限，默认 1，即同一 {@code x-session-id} 最多允许几个请求同时处于「转发到 vLLM」状态。
+     * <p>
+     * 1 = 严格串行（旧版语义）；N &gt; 1 时同一会话最多 N 个请求并行，超出部分被 503 拒绝并引导重试。
+     */
+    @Column(name = "concurrency")
+    private Integer concurrency;
+
     @Column(name = "created_at", fill = TimestampFill.CreatedTimeStringFill.class)
     private String createdAt;
 
@@ -163,6 +171,10 @@ public class ApiKey extends BaseModel<ApiKey, Long> {
 
     public Integer getLevel() { return level == null ? 0 : level; }
     public void setLevel(Integer level) { this.level = level; }
+
+    /** 会话并发上限，未设置视为 1（严格串行） */
+    public int getConcurrency() { return concurrency == null ? 1 : Math.max(1, concurrency); }
+    public void setConcurrency(Integer concurrency) { this.concurrency = concurrency; }
 
     public Integer getWeight() { return weight; }
     public void setWeight(Integer weight) { this.weight = weight; }

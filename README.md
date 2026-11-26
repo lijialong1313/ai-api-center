@@ -2,7 +2,7 @@
 
 基于 [`jaravel-vendor`](https://github.com/weacsoft/jaravel-vendor) 的 OpenAI 兼容排队中间件。
 
-多个 DeepSeek Harness（DSH）实例把请求发到本服务，由它统一做**会话串行 + 后端槽位控制 + 按 Key 加权分配份额**，
+多个 DeepSeek Harness（DSH）实例把请求发到本服务，由它统一做**会话并发控制（按 Key 配置上限，默认串行）+ 后端槽位控制 + 按 Key 加权分配份额**，
 再转发给 vLLM 后端。面向 `max_num_seqs=1` 这类单并发后端，避免请求超出后端承载能力。
 
 配套的客户端插件：[dsh-session-gateway](https://github.com/lijialong1313/dsh-session-gateway)。
@@ -14,12 +14,12 @@
 | 能力 | 位置 |
 |---|---|
 | OpenAI 兼容端点 `/v1/**`（chat/completions、completions、embeddings、models） | `OpenAiGatewayController` |
-| 准入判定：会话串行、后端槽位、等级门槛、按权重分配份额；无会话请求按普通网关放行（满则 429） | `AdmissionScheduler` / `AdmissionState` / `WeightedFairnessGate` |
+| 准入判定：会话并发上限（按 Key，默认 1 即串行）、后端槽位、等级门槛、按权重分配份额；无会话请求按普通网关放行（满则 429） | `AdmissionScheduler` / `AdmissionState` / `WeightedFairnessGate` |
 | 忙时响应 `503 + Retry-After` | `OpenAiGatewayController#busy` |
 | 统一身份认证登录（OAuth2 授权码模式） | `SsoService` / `LoginController` |
 | 账号开通与组织信息同步 | `UserProvisionService` |
 | 认证与授权中间件 | `AdminAuthenticate` / `RequireAdmin` |
-| API Key 管理（权重、等级、启停、重新生成） | `ApiKeyService` |
+| API Key 管理（权重、等级、会话并发上限、启停、重新生成） | `ApiKeyService` |
 | GPU 后端管理（地址、容量、等级门槛、启停、健康检查） | `BackendPoolService` |
 | 管理员账号管理 | `AdminUserService` |
 | 启动时确保指定工号的管理员账号存在 | `BootstrapAdminInitializer` |
@@ -119,7 +119,7 @@ Cookie 与 Bearer 的适配需要同时写入两个请求对象：框架的守�
 
 每次请求到达 `/v1/**` 时，服务端按是否携带 `x-session-id` 请求头走两条准入路径：
 
-### 4.1 携带 `x-session-id`：会话串行 + 忙时排队
+### 4.1 携带 `x-session-id`：会话并发控制 + 忙时排队
 
 面向 DSH 等会话型客户端。判定顺序如下，任一不满足即拒绝，
 判定不通过时返回 `503 + Retry-After`，客户端按该间隔重试，每次重试重新判定。
@@ -128,12 +128,16 @@ Cookie 与 Bearer 的适配需要同时写入两个请求对象：框架的守�
 | 顺序 | 判定 | 拒绝结果 |
 |---|---|---|
 | 0 | Key 已停用或权重为 0 | 终态，返回 403，不附带 `Retry-After` |
-| 1 | 同一会话已有在途请求 | 可重试 |
+| 1 | 该会话在途数已达该 Key 的会话并发上限（默认 1，即串行） | 可重试 |
 | 2 | 无空闲且等级允许的后端 | 可重试；等级不足时给出准确原因 |
 | 3 | 本轮未轮到该 Key（权重配额） | 可重试，给出更短的重试间隔 |
-| 4 | 占用会话与槽位 | 竞争失败则归还已记账的份额并重试 |
+| 4 | 占用会话名额与槽位 | 竞争失败则归还已记账的份额并重试 |
 
 第 0 项必须排在可重试判断之前：已停用的 Key 若返回 503，客户端会持续重试且始终无法成功。
+
+第 1 项的并发上限按 Key 在 `api_keys.concurrency` 配置，默认 1（严格串行）。
+DSH 等客户端在同一会话内会并发发起多个请求（主请求与后台自动起标题等），
+默认串行下后发者会收到 503 排队；把上限调高到 2 或 3 后这些请求可以并行。
 
 权重配额把权重理解为长期服务比例：设已服务总数为 `t`、本 Key 已服务 `s`、本 Key 权重 `w`、权重之和 `W`，
 则 `ideal = (t + 1) * w / W`；`s < ideal` 时放行，否则让路。统计窗口为 60 秒。
@@ -231,11 +235,11 @@ Content-Type: application/json;charset=utf-8
 │   │                            ApiKeyService / BackendPoolService / SchedulerConfigCache
 │   ├── config/                  AdminAccessProperties / SsoProperties / AuthConfig / DatabaseConfig
 │   │                            RouteConfig / StartupSecurityCheck / BootstrapAdminInitializer / LocalDevAdminShim
-│   └── database/migration/      6 个迁移类
+│   └── database/migration/      8 个迁移类
 ├── src/main/resources/
 │   ├── application.yml
 │   └── templates/admin/         layout / dashboard / api-keys / backends / users / login / forbidden
-├── src/test/                    8 个测试类
+├── src/test/                    10 个测试类
 ├── tools/                       fake-vllm.py / queue-probe.py / seed-e2e.py
 └── docs/design.md               设计文档
 ```
@@ -265,8 +269,12 @@ python tools/queue-probe.py
 mvn test
 ```
 
-覆盖范围包括：认证与授权链路、API Key 与后端的完整生命周期、准入判定与加权分配、
+覆盖范围包括：认证与授权链路、API Key 与后端的完整生命周期（含会话并发上限）、
+准入判定与加权分配（含并发上限下的同会话并行与超限拒绝）、
 端到端转发（含 SSE 流式响应）、启动管理员的创建与不覆盖既有账号的行为。
+
+测试 profile 使用独立 SQLite 库（`data/test-ai-api-center.db`），并把迁移源覆写为
+`DIRECTORY_CLASSES`（扫 `target/classes`），原因见 [`docs/design.md`](docs/design.md) §6。
 
 ---
 

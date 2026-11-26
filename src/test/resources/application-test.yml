@@ -6,6 +6,16 @@ spring:
     # 全进程唯一的，第二个上下文会失败。所以统一成一个测试库。
     url: jdbc:sqlite:data/test-ai-api-center.db
 
+jaravel:
+  migration:
+    # 覆盖主配置的 CLASSPATH。0.1.3 扫描器的 CLASSPATH 模式读 java.class.path 字符串，
+    # 而 surefire 的 fork JVM 真实 classpath 在 booter jar 的 manifest Class-Path 里
+    # （java.class.path 只含 booter 自身），永远扫到 0 个迁移类、新迁移不执行。
+    # DIRECTORY_CLASSES 用 URLClassLoader 直接扫 target/classes（相对 user.dir=server/），
+    # 不依赖 java.class.path；生产 fat jar 路径不受影响（见主 application.yml 的 CLASSPATH）。
+    source: DIRECTORY_CLASSES
+    classes-dir: target/classes
+
 app:
   admin:
     # 测试库不预置启动管理员，避免影响 countAdmins / 最后管理员等断言

@@ -74,7 +74,7 @@ public class AdmissionScheduler {
      * 判定顺序（任一不满足即拒绝并给出 Retry-After）：
      * <ol>
      *   <li>Key 必须存在且启用（由调用方做鉴权，这里信任传入的 keyHash）；</li>
-     *   <li>该会话不能已有在途请求 —— 保证同会话严格串行（不变量 1）；</li>
+     *   <li>该会话的在途请求数不能达到该 Key 的并发上限（默认 1，即严格串行）——不变量 1；</li>
      *   <li>必须存在有空槽的后端 —— 保证单后端不超容量（不变量 2）；</li>
      *   <li>按平滑加权轮询选出本轮的 Key；本轮不是它则要求稍后重试。</li>
      * </ol>
@@ -120,8 +120,11 @@ public class AdmissionScheduler {
                 return Decision.reject(0, REASON_KEY_DISABLED);
             }
 
-            // 1) 会话已占用 → 必须等（同会话严格串行，不与其他会话交错）
-            if (state.isSessionBusy(sessionId)) {
+            // 该 Key 的会话并发上限（未配置视为 1，即严格串行）
+            int sessionLimit = configCache.concurrency().getOrDefault(keyHash, 1);
+
+            // 1) 会话在途数已达上限 → 必须等（同会话最多 sessionLimit 个并行，不与其他会话交错）
+            if (state.isSessionAtLimit(sessionId, sessionLimit)) {
                 return Decision.reject(retryAfterSeconds(), "同一会话已有在途请求");
             }
 
@@ -152,8 +155,8 @@ public class AdmissionScheduler {
                 return Decision.reject(retryAfterSeconds(), "槽位竞争失败，稍后重试");
             }
 
-            // 5) 落闸：同时占会话与槽位
-            if (!state.tryAcquire(requestId, sessionId, chosen.getBackendId())) {
+            // 5) 落闸：同时占会话名额与槽位
+            if (!state.tryAcquire(requestId, sessionId, sessionLimit, chosen.getBackendId())) {
                 // 并发下刚检查完就被其他线程抢占。必须回滚上一步 fairness.allow() 的记账，
                 // 否则该 Key 消耗了额度却没有获得服务，长期比例低于其权重。
                 fairness.rollback(keyHash);
@@ -208,8 +211,8 @@ public class AdmissionScheduler {
                 return Decision.reject(0, "槽位竞争失败");
             }
 
-            // sessionId 传 null：只占后端槽位，不登记会话（tryAcquire 对 null 会话跳过会话锁）。
-            if (!state.tryAcquire(requestId, null, chosen.getBackendId())) {
+            // sessionId 传 null：只占后端槽位，不登记会话（tryAcquire 对 null 会话跳过会话名额）。
+            if (!state.tryAcquire(requestId, null, 0, chosen.getBackendId())) {
                 return Decision.reject(0, "槽位竞争失败");
             }
             return Decision.admit(chosen, requestId);

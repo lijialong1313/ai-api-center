@@ -142,6 +142,91 @@ class AdmissionConcurrencyTest {
                 .isEqualTo(threads);
     }
 
+    @Test
+    @DisplayName("会话并发上限 3：同一 session 峰值同时在途不超过 3，且能并行放行 3 个")
+    void sessionConcurrencyLimitAllowsThreeParallel() throws Exception {
+        // 建 Key 后把并发上限改成 3（update 会同时清掉调度器缓存，立即生效）
+        ApiKeyService.CreatedKey created = newKey("会话并发测试", 10);
+        apiKeyService.update(created.key().getId(), null, null, null, null, 3);
+        String keyHash = created.key().getKeyHash();
+        newBackend("conc-limit-gpu", 4);   // 容量给大，确保拒绝只可能来自会话上限
+
+        int threads = 32;
+        String sharedSession = "session-limit-001";
+        AtomicInteger admittedCount = new AtomicInteger();
+        AtomicInteger rejectedCount = new AtomicInteger();
+        AtomicInteger concurrentInside = new AtomicInteger();
+        AtomicInteger peakConcurrent = new AtomicInteger();
+
+        ExecutorService pool = Executors.newFixedThreadPool(threads);
+        CountDownLatch startGate = new CountDownLatch(1);
+        CountDownLatch done = new CountDownLatch(threads);
+
+        for (int i = 0; i < threads; i++) {
+            pool.submit(() -> {
+                try {
+                    startGate.await();
+                    String requestId = "req-" + System.nanoTime() + "-" + Thread.currentThread().getId();
+                    AdmissionScheduler.Decision decision =
+                            scheduler.decide(requestId, sharedSession, keyHash);
+                    if (decision.admitted()) {
+                        int now = concurrentInside.incrementAndGet();
+                        peakConcurrent.accumulateAndGet(now, Math::max);
+                        admittedCount.incrementAndGet();
+                        Thread.sleep(60);
+                        concurrentInside.decrementAndGet();
+                        scheduler.release(requestId);
+                    } else {
+                        rejectedCount.incrementAndGet();
+                    }
+                } catch (Exception ignored) {
+                } finally {
+                    done.countDown();
+                }
+            });
+        }
+
+        startGate.countDown();
+        assertThat(done.await(30, TimeUnit.SECONDS)).as("并发任务应在 30s 内完成").isTrue();
+        pool.shutdownNow();
+
+        assertThat(peakConcurrent.get())
+                .as("同一 session 的峰值同时在途数不得超过并发上限 3")
+                .isLessThanOrEqualTo(3);
+        assertThat(peakConcurrent.get())
+                .as("3 个名额应能被同时占用（不再串行）")
+                .isGreaterThanOrEqualTo(3);
+        assertThat(admittedCount.get()).as("应有请求被放行").isGreaterThan(0);
+        assertThat(admittedCount.get() + rejectedCount.get()).as("每个请求都应有着落")
+                .isEqualTo(threads);
+    }
+
+    @Test
+    @DisplayName("后台把会话并发上限从 1 改成 2 后，同一 session 的第二个请求即被放行")
+    void concurrencyUpdateTakesEffectImmediately() {
+        ApiKeyService.CreatedKey created = newKey("即时生效测试", 5);
+        String keyHash = created.key().getKeyHash();
+        String backendId = newBackend("conc-update-gpu", 2);
+        String sessionId = "sess-update";
+
+        // 初始并发上限 1：同会话第二个请求被拒
+        AdmissionScheduler.Decision r1 = scheduler.decide("u-r1", sessionId, keyHash);
+        assertThat(r1.admitted()).isTrue();
+        AdmissionScheduler.Decision r2 = scheduler.decide("u-r2", sessionId, keyHash);
+        assertThat(r2.admitted()).as("上限 1 时第二个请求应被拒").isFalse();
+
+        // 后台改上限为 2（service 层会失效调度器缓存）
+        apiKeyService.update(created.key().getId(), null, null, null, null, 2);
+
+        AdmissionScheduler.Decision r3 = scheduler.decide("u-r3", sessionId, keyHash);
+        assertThat(r3.admitted()).as("上限改 2 后，同会话第二个在途请求应放行").isTrue();
+        assertThat(state.inflightOf(backendId)).isEqualTo(2);
+
+        scheduler.release("u-r1");
+        scheduler.release("u-r3");
+        assertThat(state.sessionInflight(sessionId)).as("两个都释放后会话在途归零").isZero();
+    }
+
     // ==================== 核心不变量 2：后端容量 ====================
 
     @Test

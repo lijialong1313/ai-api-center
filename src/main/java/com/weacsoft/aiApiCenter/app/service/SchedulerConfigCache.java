@@ -34,7 +34,10 @@ public class SchedulerConfigCache {
     /** 权重缓存的 Cache key 前缀（对齐文档 §5.2 的 {@code key_weight:}） */
     public static final String WEIGHT_CACHE_PREFIX = "key_weight:";
 
-    /** 进程内权重表：apiKey 主键 → 权重（只含可用 Key） */
+    /** 会话并发上限缓存的 Cache key 前缀 */
+    public static final String CONCURRENCY_CACHE_PREFIX = "key_concurrency:";
+
+    /** 进程内权重表：apiKey 主键 → 权重与会话并发上限（只含可用 Key） */
     private final Map<Long, WeightEntry> localWeights = new ConcurrentHashMap<>();
 
     /** 本地缓存的加载时间戳，用于 TTL 刷新（多机无 Redis 时靠它感知其他实例的修改） */
@@ -64,6 +67,26 @@ public class SchedulerConfigCache {
         return result;
     }
 
+    /**
+     * 当前可参与调度的会话并发上限表（apiKey 哈希 → 并发上限）。
+     * <p>
+     * 与 {@link #weights()} 共用同一份回源；未配置上限的 Key 返回 1（严格串行）。
+     *
+     * @return 只读视图：Key 的哈希 → 同一会话允许的最大在途请求数
+     */
+    public Map<String, Integer> concurrency() {
+        if (needsReload()) {
+            synchronized (this) {
+                if (needsReload()) {
+                    reload();
+                }
+            }
+        }
+        Map<String, Integer> result = new LinkedHashMap<>();
+        localWeights.forEach((id, entry) -> result.put(entry.keyHash(), entry.concurrency()));
+        return result;
+    }
+
     /** 是否为「可用 Key」的权重表为空（用于快速判断有无可调度对象） */
     public boolean isEmpty() {
         return weights().isEmpty();
@@ -90,7 +113,7 @@ public class SchedulerConfigCache {
         return localWeights.isEmpty() || (System.currentTimeMillis() - loadedAt) > LOCAL_TTL_MS;
     }
 
-    /** 回源数据库，刷新本地权重表并写入 Cache */
+    /** 回源数据库，刷新本地权重表与会话并发上限表并写入 Cache */
     private void reload() {
         List<ApiKey> keys = ApiKey.schedulable();
         localWeights.clear();
@@ -99,8 +122,10 @@ public class SchedulerConfigCache {
             if (weight <= 0) {
                 continue;
             }
-            localWeights.put(key.getId(), new WeightEntry(key.getKeyHash(), weight));
+            localWeights.put(key.getId(),
+                    new WeightEntry(key.getKeyHash(), weight, key.getConcurrency()));
             putCacheWeight(key.getKeyHash(), weight);
+            putCacheConcurrency(key.getKeyHash(), key.getConcurrency());
         }
         loadedAt = System.currentTimeMillis();
         log.debug("[scheduler] 权重表已刷新: {} 个可用 Key", localWeights.size());
@@ -115,7 +140,16 @@ public class SchedulerConfigCache {
         }
     }
 
-    /** 权重条目：Key 哈希 + 权重 */
-    private record WeightEntry(String keyHash, int weight) {
+    /** 把单个会话并发上限写入 jaravel Cache（失败不影响调度） */
+    private void putCacheConcurrency(String keyHash, int concurrency) {
+        try {
+            Cache.put(CONCURRENCY_CACHE_PREFIX + keyHash, concurrency);
+        } catch (Exception e) {
+            log.debug("[scheduler] 写入会话并发上限缓存失败（忽略）: {}", e.getMessage());
+        }
+    }
+
+    /** 权重条目：Key 哈希 + 权重 + 会话并发上限 */
+    private record WeightEntry(String keyHash, int weight, int concurrency) {
     }
 }
